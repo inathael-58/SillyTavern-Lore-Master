@@ -691,3 +691,131 @@ export function overCap(activated, caps) {
     }
     return drop;
 }
+
+// ---------------------------------------------------------------- editor helpers
+
+/** Where an entry goes in the prompt, in words. */
+export const POSITION_INFO = [
+    { value: 0, short: '↑ตัวละคร', label: 'ก่อนข้อมูลตัวละคร', help: 'อยู่ในส่วนข้อมูลตั้งต้นของ prompt เหมาะกับข้อมูลโลก ตัวละครรอง สถานที่ (ค่าที่ใช้กันมากที่สุด)' },
+    { value: 1, short: '↓ตัวละคร', label: 'หลังข้อมูลตัวละคร', help: 'เหมือนด้านบน แต่อยู่ถัดจากการ์ด โมเดลให้น้ำหนักมากกว่านิดหน่อย' },
+    { value: 5, short: '↑ตัวอย่าง', label: 'ก่อนตัวอย่างบทสนทนา', help: 'แทรกก่อน Example Messages ของการ์ด' },
+    { value: 6, short: '↓ตัวอย่าง', label: 'หลังตัวอย่างบทสนทนา', help: 'แทรกหลัง Example Messages ของการ์ด' },
+    { value: 2, short: '↑AN', label: "บน Author's Note", help: "ต่อท้ายด้านบนของ Author's Note (ต้องเปิดใช้ Author's Note)" },
+    { value: 3, short: '↓AN', label: "ล่าง Author's Note", help: "ต่อท้ายด้านล่างของ Author's Note" },
+    { value: 4, short: '@D', label: 'ในแชท ตามความลึก', help: 'แทรกเป็นข้อความในแชท ห่างจากข้อความล่าสุดตามจำนวนที่ตั้ง (0 = ล่างสุด) โมเดลเห็นชัดที่สุด แต่ถ้าติดหลายตัวจะรกบทสนทนา' },
+    { value: 7, short: 'Outlet', label: 'Outlet (ใช้กับมาโคร)', help: 'ไม่ใส่เอง จะไปโผล่ตรงที่เขียน {{outlet::ชื่อ}} ไว้ใน prompt หรือการ์ด' },
+];
+export const positionInfo = v => POSITION_INFO.find(p => p.value === Number(v)) ?? POSITION_INFO[0];
+export function positionShort(e) {
+    const p = positionInfo(e.position);
+    if (p.value === 4) return `@D${e.depth ?? 4}${['', '👤', '🤖'][Number(e.role) || 0]}`;
+    if (p.value === 7) return `Outlet:${e.outletName || '?'}`;
+    return p.short;
+}
+
+export const ROLE_INFO = [
+    { value: 0, label: 'System (ระบบ)' },
+    { value: 1, label: 'User (ผู้เล่น)' },
+    { value: 2, label: 'Assistant (บอท)' },
+];
+
+export const LOGIC_INFO = [
+    { value: LOGIC.AND_ANY, label: 'ต้องเจอคำใดคำหนึ่งในนี้ด้วย' },
+    { value: LOGIC.AND_ALL, label: 'ต้องเจอครบทุกคำในนี้ด้วย' },
+    { value: LOGIC.NOT_ANY, label: 'ต้องไม่เจอคำไหนในนี้เลย' },
+    { value: LOGIC.NOT_ALL, label: 'ต้องไม่เจอครบทุกคำในนี้' },
+];
+
+export const TRIGGER_INFO = [
+    { value: 'normal', label: 'ส่งข้อความปกติ' },
+    { value: 'continue', label: 'Continue' },
+    { value: 'impersonate', label: 'Impersonate' },
+    { value: 'swipe', label: 'Swipe' },
+    { value: 'regenerate', label: 'Regenerate' },
+    { value: 'quiet', label: 'Quiet (extension สั่งเจนเบื้องหลัง)' },
+];
+
+/** off | constant | vector | key */
+export function entryStatus(e) {
+    if (e.disable) return 'off';
+    if (e.constant) return 'constant';
+    if (e.vectorized) return 'vector';
+    return 'key';
+}
+
+/** A SillyTavern world's entries as a list, in the book's own order. */
+export function entriesOf(world) {
+    return Object.values(world?.entries ?? {})
+        .filter(e => e && typeof e === 'object')
+        .sort((a, b) => num(a.displayIndex, num(a.uid, 0)) - num(b.displayIndex, num(b.uid, 0)) || num(a.uid, 0) - num(b.uid, 0));
+}
+
+/** The lowest unused uid. */
+export function freeUid(world) {
+    const used = new Set(Object.keys(world?.entries ?? {}).map(Number));
+    let i = 0;
+    while (used.has(i)) i++;
+    return i;
+}
+
+/** A new entry for `world`, put at the end of the book. */
+export function newEntry(world, template = ENTRY_DEFAULTS, patch = {}) {
+    const uid = freeUid(world);
+    const last = entriesOf(world).reduce((m, e) => Math.max(m, num(e.displayIndex, -1)), -1);
+    return { ...structuredClone(template), uid, displayIndex: last + 1, addMemo: true, ...structuredClone(patch) };
+}
+
+/** Problems with one key, for the editor. level: bad (fires far too often / never) | warn | info */
+export function keyWarnings(key, { names = {}, isThaiDictWord = null } = {}) {
+    const k = String(key ?? '').trim();
+    const out = [];
+    if (!k) return out;
+    if (/^\/.*\/[a-z]*$/i.test(k) && !parseRegexKey(k)) out.push({ level: 'bad', text: 'regex ไม่ถูกต้อง จะไม่ติด' });
+    if (parseRegexKey(k)) return out;
+    const lk = k.toLowerCase();
+    const always = [names.char, names.user, ...String(names.char ?? '').split(/\s+/)].filter(s => s && s.length > 1).map(s => s.toLowerCase());
+    if (/^\{\{(char|user)\}\}$/i.test(k) || always.includes(lk)) out.push({ level: 'bad', text: 'ชื่อตัวละครหลัก/ผู้เล่น อยู่ในแชททุกเทิร์น เอนทรีจะติดตลอด' });
+    else if (/^#?\d+$/.test(k)) out.push({ level: 'warn', text: 'เป็นตัวเลขอย่างเดียว ติดกับตัวเลขในประโยคปกติ' });
+    else if (!THAI.test(k) && k.length <= 2) out.push({ level: 'warn', text: 'สั้นเกินไป ไปติดกับคำอื่นง่าย' });
+    else if (THAI.test(k) && isThaiDictWord?.(k) && [...k].length <= 4) out.push({ level: 'warn', text: 'คำไทยสั้น ไปติดกลางคำอื่นได้ (เช่น “ยา” ใน “พยายาม”)' });
+    else if (!THAI.test(k) && !/\s/.test(k) && COMMON_WORDS.has(lk)) out.push({ level: 'warn', text: 'คำทั่วไป ติดทั้งที่เรื่องไม่ได้พูดถึง' });
+    else if (!THAI.test(k) && !/\s/.test(k) && k === lk && /^[a-z][a-z'-]+$/.test(k)) out.push({ level: 'info', text: 'คำตัวเล็กทั่วไป อาจติดบ่อยกว่าที่ตั้งใจ' });
+    return out;
+}
+
+/** Warnings for one entry as a whole (for the list badge). */
+export function entryWarnings(e, ctx = {}) {
+    const out = [];
+    if (!e.disable && !e.constant && !e.vectorized && !(e.key ?? []).length) out.push('ไม่มีคีย์ ไม่มีวันติด');
+    if (estTokens(e.content) > 700) out.push(`ยาว ≈${estTokens(e.content)} โทเคน`);
+    if (!String(e.content ?? '').trim()) out.push('ไม่มีเนื้อหา');
+    for (const k of e.key ?? []) for (const w of keyWarnings(k, ctx)) if (w.level !== 'info') out.push(`“${k}”: ${w.text}`);
+    return out;
+}
+
+/** Does the entry match a search? Searches title, keys and content; every word must match. */
+export function entryMatches(e, query) {
+    const words = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return true;
+    const hay = [e.comment, ...(e.key ?? []), ...(e.keysecondary ?? []), e.content, `#${e.uid}`].join('\n').toLowerCase();
+    return words.every(w => hay.includes(w));
+}
+
+export const SORTS = {
+    book: { label: 'ลำดับในเล่ม', fn: () => 0 },
+    name: { label: 'ชื่อ ก–ฮ', fn: (a, b) => String(a.comment || '').localeCompare(String(b.comment || ''), ['th', 'en'], { numeric: true }) },
+    order: { label: 'order มากสุด', fn: (a, b) => num(b.order, 0) - num(a.order, 0) },
+    tokens: { label: 'ยาวสุด', fn: (a, b) => estTokens(b.content) - estTokens(a.content) },
+};
+
+/** Book-level totals for the list. */
+export function bookStats(world) {
+    const list = entriesOf(world);
+    const live = list.filter(e => !e.disable);
+    return {
+        count: list.length,
+        on: live.length,
+        constant: live.filter(e => e.constant).length,
+        tokens: live.reduce((n, e) => n + estTokens(e.content), 0),
+    };
+}

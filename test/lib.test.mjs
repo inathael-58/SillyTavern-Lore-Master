@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
     detectFormat, readLorebook, mergeBooks, toWorld, cleanKeys, titleParts, keyMatches, firingKey,
     simulate, diagnose, applyChanges, overCap, estTokens, LOGIC, POSITION,
+    entryStatus, entriesOf, freeUid, newEntry, keyWarnings, entryWarnings, entryMatches, positionShort, bookStats, SORTS,
 } from '../lib.js';
 
 /** A JanitorAI export entry, with the fields their files carry. */
@@ -233,4 +234,71 @@ test('the character\'s full name as a key is reported even when it is two words'
     const c = diagnose(es, { names: { char: 'Cody Dawson' } }).find(i => i.id === 'everywhere').changes[0];
     assert.equal(c.key, 'Cody Dawson');
     assert.ok(c.checked);
+});
+
+test('entryStatus', () => {
+    assert.equal(entryStatus({ disable: true, constant: true }), 'off');
+    assert.equal(entryStatus({ constant: true }), 'constant');
+    assert.equal(entryStatus({ vectorized: true }), 'vector');
+    assert.equal(entryStatus({}), 'key');
+});
+
+test('entriesOf keeps book order; freeUid and newEntry fill gaps and append', () => {
+    const w = { entries: { 0: { uid: 0, displayIndex: 2 }, 2: { uid: 2, displayIndex: 0 }, 3: { uid: 3 } } };
+    assert.deepEqual(entriesOf(w).map(e => e.uid), [2, 0, 3]);
+    assert.equal(freeUid(w), 1);
+    const e = newEntry(w, undefined, { comment: 'x' });
+    assert.equal(e.uid, 1);
+    assert.equal(e.displayIndex, 3);
+    assert.equal(e.comment, 'x');
+    assert.deepEqual(e.key, []);
+    assert.equal(freeUid({ entries: {} }), 0);
+});
+
+test('keyWarnings: names, numbers, short, common, Thai dictionary words, bad regex', () => {
+    const ctx = { names: { char: 'Cody Dawson', user: 'Kim' }, isThaiDictWord: s => ['ยา', 'แมว'].includes(s) };
+    const lv = k => keyWarnings(k, ctx).map(w => w.level);
+    assert.deepEqual(lv('Cody'), ['bad']);
+    assert.deepEqual(lv('{{user}}'), ['bad']);
+    assert.deepEqual(lv('#11'), ['warn']);
+    assert.deepEqual(lv('Al'), ['warn']);
+    assert.deepEqual(lv('Park'), ['warn']);
+    assert.deepEqual(lv('ยา'), ['warn']);
+    assert.deepEqual(lv('โนเอล'), []);
+    assert.deepEqual(lv('forklift'), ['warn']);
+    assert.deepEqual(lv('zebrafish'), ['info']);
+    assert.deepEqual(lv('Garrick Voss'), []);
+    assert.deepEqual(lv('/(unclosed/'), ['bad']);
+    assert.deepEqual(lv('/ok|fine/i'), []);
+});
+
+test('entryWarnings counts what matters for the list badge', () => {
+    assert.deepEqual(entryWarnings({ key: [], content: 'x' }), ['ไม่มีคีย์ ไม่มีวันติด']);
+    assert.equal(entryWarnings({ key: [], constant: true, content: 'x' }).length, 0);
+    assert.equal(entryWarnings({ key: ['zebrafish'], content: 'x' }).length, 0, 'info-level key notes are not counted');
+    assert.equal(entryWarnings({ key: ['Park'], content: '' }).length, 2);
+});
+
+test('entryMatches searches title, keys and content with every word', () => {
+    const e = { uid: 7, comment: 'Weld', key: ['Garrick'], keysecondary: [], content: 'hydraulic armor' };
+    assert.ok(entryMatches(e, 'weld armor'));
+    assert.ok(entryMatches(e, 'garrick'));
+    assert.ok(entryMatches(e, '#7'));
+    assert.ok(!entryMatches(e, 'weld laser'));
+    assert.ok(entryMatches(e, '  '));
+});
+
+test('positionShort and sorts', () => {
+    assert.equal(positionShort({ position: 0 }), '↑ตัวละคร');
+    assert.equal(positionShort({ position: 4, depth: 2, role: 1 }), '@D2👤');
+    assert.equal(positionShort({ position: 7, outletName: 'v' }), 'Outlet:v');
+    const list = [{ comment: 'ข', order: 1, content: 'a' }, { comment: 'ก', order: 5, content: 'aaaaaaaa' }];
+    assert.equal([...list].sort(SORTS.name.fn)[0].comment, 'ก');
+    assert.equal([...list].sort(SORTS.order.fn)[0].order, 5);
+    assert.equal([...list].sort(SORTS.tokens.fn)[0].comment, 'ก');
+});
+
+test('bookStats', () => {
+    const s = bookStats({ entries: { 0: { content: 'abcdefgh', constant: true }, 1: { content: 'abcd', disable: true } } });
+    assert.deepEqual(s, { count: 2, on: 1, constant: 1, tokens: 2 });
 });
