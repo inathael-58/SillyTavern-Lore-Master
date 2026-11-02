@@ -1,0 +1,13 @@
+{
+    "display_name": "Lore Master",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Kitima",
+    "version": "0.1.0",
+    "homePage": "https://github.com/inathael-58/SillyTavern-Lore-Master",
+    "auto_update": false,
+    "description": "Import, check, fix and merge lorebooks made for other sites (JanitorAI first): recursion chains, keys that are everywhere, generic words, clashing names, duplicates, a per-turn entry cap, and a trigger tester. Mobile-first."
+}
