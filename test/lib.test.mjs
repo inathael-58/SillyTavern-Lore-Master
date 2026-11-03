@@ -6,6 +6,7 @@ import {
     entryStatus, entriesOf, freeUid, newEntry, keyWarnings, entryWarnings, entryMatches, positionShort, bookStats, SORTS,
     parseJsonLoose, thaiKeyRequest, parseThaiKeys, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
     isGlossary, pickGlossary, condenseRequest, cleanCondensed, LONG_TOKENS,
+    keyScanner, trimToLimits, wouldFire, cardFromPng,
 } from '../lib.js';
 
 /** A JanitorAI export entry, with the fields their files carry. */
@@ -381,4 +382,61 @@ test('Thai-key issue lists every entry without a Thai key; long entries use LONG
     const issues = diagnose(es, {});
     assert.deepEqual(issues.find(i => i.id === 'thai').uids, [0]);
     assert.deepEqual(issues.find(i => i.id === 'big').uids, [0]);
+});
+
+test('keyScanner finds every entry with a key in the text, including keys inside longer keys', () => {
+    const es = [
+        { uid: 0, key: ['Ken Kaneki'] }, { uid: 1, key: ['Ken'] }, { uid: 2, key: ['Touka'] }, { uid: 3, key: ['/ann?ie/i'] }, { uid: 4, key: ['{{char}}'] },
+    ];
+    const scan = keyScanner(es, { char: 'Hide' });
+    const ids = t => [...scan(t)].map(e => e.uid).sort();
+    assert.deepEqual(ids('Then KEN KANEKI smiled'), [0, 1, 3]);
+    assert.deepEqual(ids('touka and hide'), [2, 3, 4]);
+    assert.deepEqual(ids('nothing'), [3]);
+});
+
+test('simulate gives the same result with the scanner on overlapping keys and recursion', () => {
+    const es = [
+        { uid: 0, comment: 'A', key: ['Ken Kaneki'], content: 'Ken knows Touka.' },
+        { uid: 1, comment: 'B', key: ['Touka'], content: 'Touka works at Anteiku.' },
+        { uid: 2, comment: 'C', key: ['Anteiku'], content: 'A café.' },
+        { uid: 3, comment: 'D', key: ['Ken'], content: 'x' },
+    ];
+    const r = simulate(es, 'Ken Kaneki walks in', { recursive: true });
+    assert.deepEqual(r.hits.map(h => `${h.entry.comment}${h.step}`), ['A1', 'D1', 'B2', 'C3']);
+});
+
+test('trimToLimits keeps constants, then entries in order, within both limits', () => {
+    const e = (uid, len, constant = false) => ({ uid, content: 'x'.repeat(len * 4), constant });
+    const { keep, drop, tokens } = trimToLimits([e(0, 10), e(1, 50, true), e(2, 30), e(3, 30), e(4, 5)], { maxEntries: 3, maxTokens: 100 });
+    assert.deepEqual(keep.map(x => x.uid), [1, 0, 2]);
+    assert.deepEqual(drop.map(x => x.uid), [3, 4]);
+    assert.equal(tokens, 90);
+});
+
+test('wouldFire skips constants, disabled, already active, and non-recursable entries in recursion', () => {
+    const es = [
+        { uid: 0, key: ['Ken'] }, { uid: 1, key: ['Ken'], constant: true }, { uid: 2, key: ['Ken'], disable: true },
+        { uid: 3, key: ['Ken'], excludeRecursion: true }, { uid: 4, key: ['Touka'] },
+    ];
+    assert.deepEqual(wouldFire(es, 'Ken', {}).map(e => e.uid), [0, 3]);
+    assert.deepEqual(wouldFire(es, 'Ken', { recursion: true, skip: new Set([es[0]]) }).map(e => e.uid), []);
+});
+
+test('cardFromPng reads the ccv3 / chara text chunk', () => {
+    const card = { spec: 'chara_card_v3', data: { name: 'โนเอล', character_book: { entries: [{ keys: ['a'], content: 'b' }] } } };
+    const b64 = Buffer.from(JSON.stringify(card), 'utf8').toString('base64');
+    const chunk = (type, data) => {
+        const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+        return Buffer.concat([len, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)]);
+    };
+    const png = Buffer.concat([
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        chunk('IHDR', Buffer.alloc(13)),
+        chunk('tEXt', Buffer.concat([Buffer.from('chara\0', 'latin1'), Buffer.from(b64, 'latin1')])),
+        chunk('IEND', Buffer.alloc(0)),
+    ]);
+    assert.deepEqual(cardFromPng(png), card);
+    assert.equal(detectFormat(cardFromPng(png)), 'card');
+    assert.equal(cardFromPng(Buffer.from('nope')), null);
 });

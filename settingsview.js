@@ -29,6 +29,9 @@ export function viewSettings() {
         <h3 class="lm_h">${icon('fa-sliders')} การสแกน World Info <small>· ค่ารวมของ ST</small></h3>
         <div class="lm_card lm_settings">${haveST ? St.GLOBAL_SETTINGS.map(globalRow).join('') : '<div class="lm_dim">ไม่เจอหน้าตั้งค่า World Info ของ ST</div>'}</div>
 
+        <h3 class="lm_h">${icon('fa-hand')} เบรกฉุกเฉิน <small>· กัน lorebook ระเบิดจน ST ค้าง</small></h3>
+        <div class="lm_card lm_settings">${guardBlock()}</div>
+
         <h3 class="lm_h">${icon('fa-robot')} AI <small>· คิดคีย์ไทย ย่อเนื้อหา</small></h3>
         <div class="lm_card">${aiBlock()}</div>
 
@@ -85,6 +88,21 @@ function globalRow(def) {
     return `<div class="lm_setrow lm_setcol"><div><b>${esc(def.label)}</b><small>${esc(def.help)}</small></div>
       <div class="lm_rangeRow"><input type="range" min="${def.min}" max="${Math.min(def.max, def.id === 'world_info_budget_cap' ? 8192 : def.id === 'world_info_depth' ? 50 : def.max)}" value="${v}" data-act="s-global" data-id="${def.id}">
       <input type="number" class="lm_input lm_num" min="${def.min}" max="${def.max}" value="${v}" data-act="s-global" data-id="${def.id}" inputmode="numeric">${def.unit ? `<span>${def.unit}</span>` : ''}</div></div>`;
+}
+
+function guardBlock() {
+    const s = settings();
+    const t = globalThis.LoreMaster?.lastTrip?.();
+    const f = n => Number(n).toLocaleString();
+    return `
+      ${prefRow('guard', 'เปิดเบรกฉุกเฉิน', 'ทุกเทิร์น ก่อน ST สแกน จะดูว่าแชทจะทำให้ติดกี่เอนทรี และหลังแต่ละรอบจะดูว่าลูกโซ่รอบถัดไปจะดึงมาอีกเท่าไหร่ ถ้าเกินที่ตั้ง จะตัดตัวที่สำคัญน้อยสุดและหยุดลูกโซ่ ใช้กับทุกเล่ม ไม่แก้ไฟล์เล่ม')}
+      <div class="lm_two">
+        <label><span class="lm_label">เอนทรีต่อเทิร์นไม่เกิน</span><input type="number" class="lm_input" min="5" max="500" value="${s.guardMaxEntries}" data-act="s-gnum" data-k="guardMaxEntries" inputmode="numeric"></label>
+        <label><span class="lm_label">โทเคน lore ต่อเทิร์นไม่เกิน</span><input type="number" class="lm_input" min="2000" max="500000" step="1000" value="${s.guardMaxTokens}" data-act="s-gnum" data-k="guardMaxTokens" inputmode="numeric"></label>
+      </div>
+      <div class="lm_hint">ค่าเริ่มต้น 40 เอนทรี / 25,000 โทเคน เกินนี้แทบไม่มีบอทไหนตั้งใจให้ติดจริง นับโทเคนแบบประมาณ</div>
+      ${prefRow('warnBigBooks', 'เตือนเมื่อเปิดแชทที่ใช้ lorebook ใหญ่มาก', 'เกิน 300 เอนทรี หรือ 100,000 โทเคน แตะการแจ้งเตือนเพื่อตรวจเล่มได้เลย')}
+      ${t ? `<div class="lm_warn">${icon('fa-hand')} เบรกล่าสุด ${new Date(t.at).toLocaleTimeString()}: ${t.book ? `“${esc(t.book)}” ` : ''}${t.kind === 'chain' ? 'ลูกโซ่จะดึง' : 'จะติด'} ${f(t.would)} เอนทรี ≈${f(t.wouldTokens)} โทเคน → เหลือ ${f(t.kept)} เอนทรี ≈${f(t.keptTokens)} โทเคน</div>` : ''}`;
 }
 
 let testing = false;
@@ -159,6 +177,7 @@ act('click', {
 
 act('change', {
     's-src': el => { aiSettings().sources[Number(el.dataset.i)] = el.value; save(); shell.render(); },
+    's-gnum': el => { const k = el.dataset.k; settings()[k] = Math.max(k === 'guardMaxEntries' ? 5 : 2000, Number(el.value) || 0); save(); },
     's-timeout': el => { aiSettings().timeoutSec = Math.max(15, Math.min(600, Number(el.value) || 90)); save(); },
     's-pref': el => { settings()[el.dataset.k] = el.checked; save(); shell.refreshEntryPoints?.(); },
     's-global': el => {

@@ -5,7 +5,7 @@
 
 import {
     readLorebook, mergeBooks, diagnose, applyChanges, simulate, summarize, toWorld,
-    estTokens, FORMAT_LABEL, POSITION, LONG_TOKENS, THAI, cleanKeys, isGlossary, upsertGlossaryList, glossaryLines,
+    estTokens, FORMAT_LABEL, POSITION, cardFromPng, LONG_TOKENS, THAI, cleanKeys, isGlossary, upsertGlossaryList, glossaryLines,
     THAI_KEY_SYSTEM, thaiKeyRequest, parseThaiKeys, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
 } from './lib.js';
 import * as St from './store.js';
@@ -89,7 +89,16 @@ async function addBook(name) {
 async function readFiles(files) {
     let n = 0;
     for (const f of files) {
-        try { addSource({ name: f.name.replace(/\.json$/i, ''), raw: JSON.parse(await f.text()) }); n++; } catch (e) { toast.error(`${f.name}: ${e?.message ?? e}`, 'อ่านไฟล์ไม่ได้'); }
+        try {
+            let raw;
+            if (/\.png$/i.test(f.name) || f.type === 'image/png') {
+                raw = cardFromPng(await f.arrayBuffer());
+                if (!raw) throw new Error('รูปนี้ไม่มีข้อมูลการ์ดตัวละคร');
+                if (!(raw.data?.character_book?.entries ?? raw.character_book?.entries)?.length) throw new Error('การ์ดนี้ไม่มี lorebook ในตัว');
+            } else raw = JSON.parse(await f.text());
+            addSource({ name: f.name.replace(/\.(json|png)$/i, ''), raw });
+            n++;
+        } catch (e) { toast.error(`${f.name}: ${e?.message ?? e}`, 'อ่านไฟล์ไม่ได้'); }
     }
     return n;
 }
@@ -161,8 +170,8 @@ function viewSources() {
       <div>เลือก lorebook ที่จะตรวจ ถ้าเลือกหลายเล่มจะรวมเป็นเล่มเดียวให้ ไฟล์ export ของ <b>JanitorAI</b> ที่ ST import เองไม่ได้ ใช้ที่นี่ได้เลย</div>
     </div>
     <div class="lm_bigchoices">
-      <label class="lm_choice">${icon('fa-file-import')}<b>เลือกไฟล์ .json</b><small>ST · JanitorAI · การ์ด · หลายไฟล์ได้</small>
-        <input type="file" accept=".json,application/json" multiple hidden data-act="d-files"></label>
+      <label class="lm_choice">${icon('fa-file-import')}<b>เลือกไฟล์</b><small>.json ของ ST · JanitorAI · การ์ด .png (ตรวจก่อน import ได้) · หลายไฟล์ได้</small>
+        <input type="file" accept=".json,application/json,.png,image/png" multiple hidden data-act="d-files"></label>
       <button class="lm_choice ${S.picker ? 'lm_on' : ''}" data-act="d-picker">${icon('fa-book')}<b>เลือกจากเล่มใน ST</b><small>${(St.bookNames()).length} เล่ม</small></button>
       ${cc ? `<button class="lm_choice" data-act="d-charbooks">${icon('fa-user')}<b>เล่มของ ${esc(cc.ch.name)}</b><small>เล่มหลัก + เล่มเสริม</small></button>` : ''}
     </div>
@@ -220,7 +229,7 @@ function viewFix() {
     let live = '';
     if (sample) {
         const o = scanOpts();
-        live = `<div class="lm_card lm_live"><div class="lm_dim">ลองกับข้อความล่าสุดในแชทที่เปิดอยู่ (recursion ${o.recursive ? 'เปิด' : 'ปิด'})</div>${vs(simulate(S.base, sample, o), simulate(S.work, sample, o))}</div>`;
+        live = `<div class="lm_card lm_live"><div class="lm_dim">ลองกับข้อความล่าสุดในแชทที่เปิดอยู่ (recursion ${o.recursive ? 'เปิด' : 'ปิด'})</div>${vs(simMemo(S.base, sample, o), simMemo(S.work, sample, o))}</div>`;
     }
     const checkedTotal = S.issues.reduce((n, i) => n + i.changes.filter(c => c.checked).length, 0);
     return `
@@ -495,10 +504,20 @@ function viewTest() {
     <p class="lm_hint">จำลองแบบติดมากที่สุด: ไม่นับ probability, inclusion group และงบโทเคน ของจริงอาจติดน้อยกว่านี้ ดูของจริงได้ใน Lore Lens</p>
     <div class="lm_result">${testResult(text, o)}</div>`;
 }
+/** Simulations are cached per (entries, text, options): re-rendering on every tap must not redo them. */
+const simCache = new WeakMap();
+function simMemo(entries, text, o) {
+    const key = `${text}\u0000${o.recursive}|${o.wholeWords}|${o.caseSensitive}`;
+    let m = simCache.get(entries);
+    if (!m) { m = new Map(); simCache.set(entries, m); }
+    if (!m.has(key)) { if (m.size > 6) m.clear(); m.set(key, simulate(entries, text, o)); }
+    return m.get(key);
+}
+
 function testResult(text, o) {
     if (!text.trim()) return '';
-    const before = simulate(S.base, text, o);
-    const now = simulate(S.work, text, o);
+    const before = simMemo(S.base, text, o);
+    const now = simMemo(S.work, text, o);
     const nowSet = new Set(now.hits.map(h => h.entry.uid));
     const gone = before.hits.filter(h => S.work.some(e => e.uid === h.entry.uid) && !nowSet.has(h.entry.uid));
     return `

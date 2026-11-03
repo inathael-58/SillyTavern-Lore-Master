@@ -6,8 +6,8 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Kitima",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "homePage": "https://github.com/inathael-58/SillyTavern-Lore-Master",
     "auto_update": false,
-    "description": "A mobile-first replacement for the World Info panel with AI help (Thai keywords, a name glossary sent only when relevant, condensing long entries): every lorebook, a full entry editor with plain-Thai help, links to card/chat/Global, bulk edits, ST global settings. Plus import, check, fix and merge lorebooks from other sites (JanitorAI first), a trigger tester and a per-turn entry cap."
+    "description": "A mobile-first replacement for the World Info panel with an emergency brake against lorebooks that explode through recursion, and AI help (Thai keywords, a name glossary sent only when relevant, condensing long entries): every lorebook, a full entry editor with plain-Thai help, links to card/chat/Global, bulk edits, ST global settings. Plus import, check, fix and merge lorebooks from other sites (JanitorAI first), a trigger tester and a per-turn entry cap."
 }

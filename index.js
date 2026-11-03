@@ -14,7 +14,10 @@
  *        editor.js · doctor.js · settingsview.js (screens) · prefs.js (settings)
  */
 
-import { detectFormat, FORMAT_LABEL, overCap, isGlossary, parseGlossary, pickGlossary, GLOSSARY_HEAD } from './lib.js';
+import {
+    detectFormat, FORMAT_LABEL, overCap, isGlossary, parseGlossary, pickGlossary, GLOSSARY_HEAD,
+    keyScanner, wouldFire, trimToLimits, byPriority, estTokens, bookStats,
+} from './lib.js';
 import * as St from './store.js';
 import { settings, save } from './prefs.js';
 import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast } from './ui.js';
@@ -23,7 +26,7 @@ import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor,
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const W = St.WIref;
 
 hooks.checkBook = checkBook;
@@ -397,10 +400,118 @@ function onScanDone(args) {
             console.info(LOG, `per-turn cap: dropped ${drop.length} entries`, lastCut.names);
         }
     }
+    try { guardAfterLoop(args, map); } catch (e) { console.error(LOG, 'emergency brake failed', e); }
     // the last loop of the scan: send only the glossary names that matter this turn
     if (glossLines.length && !args?.state?.next) {
         const picked = pickGlossary(glossLines, { text: recentChat(), activated: [...map.values()] });
         setGlossaryPrompt(picked.length ? `${GLOSSARY_HEAD}\n${picked.map(l => `- ${l.en} = ${l.th}`).join('\n')}` : '');
+    }
+}
+
+// ---------------------------------------------------------------- runtime: emergency brake
+//
+// A lorebook whose entries mention each other can pull in hundreds of entries through
+// recursion in one turn (one card: 471 of 542 entries, ~760k tokens, from its first message).
+// SillyTavern then counts tokens of megabytes of text over and over and freezes.
+// Before the scan we trim what the chat itself would trigger; after each scan loop we look
+// at what the next recursion loop would pull in, and stop the recursion if it is too much.
+// Nothing is changed in the books: the entries handed to the scan are copies.
+
+let scanCtx = null;     // { all, scanner, o }
+let lastTrip = null;    // shown in the settings screen
+const tripShown = new Set();
+const guardLimits = () => {
+    const s = settings();
+    return { maxEntries: Math.max(5, Number(s.guardMaxEntries) || 40), maxTokens: Math.max(2000, Number(s.guardMaxTokens) || 25000) };
+};
+const matchOpts = () => {
+    const c = St.ctx();
+    return { names: { char: c.name2 ?? '', user: c.name1 ?? '' }, caseSensitive: !!W.world_info_case_sensitive, wholeWords: !!W.world_info_match_whole_words };
+};
+const sumTokens = list => list.reduce((n, e) => n + estTokens(e.content), 0);
+function chatScanText() {
+    const c = St.ctx();
+    const depth = Math.max(1, Number(W.world_info_depth) || 2);
+    const withNames = W.world_info_include_names !== false;
+    return (c.chat ?? []).filter(m => !m.is_system && m.mes).slice(-depth).map(m => (withNames ? `${m.name}: ${m.mes}` : m.mes)).join('\n');
+}
+function mainBook(list) {
+    const count = new Map();
+    for (const e of list) if (e?.world) count.set(e.world, (count.get(e.world) ?? 0) + 1);
+    return [...count].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+}
+
+function guardBeforeScan(arrays) {
+    scanCtx = null;
+    if (!settings().guard) return;
+    const all = arrays.flat();
+    if (!all.length) return;
+    const o = matchOpts();
+    const scanner = keyScanner(all.filter(e => !e.constant && !e.disable), o.names);
+    scanCtx = { all, scanner, o };
+    const consts = all.filter(e => e.constant && !e.disable);
+    const first = wouldFire(all, chatScanText(), { ...o, scanner }).sort(byPriority);
+    const limits = guardLimits();
+    const { drop, tokens } = trimToLimits([...consts, ...first], limits);
+    if (!drop.length) return;
+    const gone = new Set(drop);
+    for (const arr of arrays) for (let i = arr.length - 1; i >= 0; i--) if (gone.has(arr[i])) arr.splice(i, 1);
+    trip({ kind: 'first', would: consts.length + first.length, wouldTokens: sumTokens(consts) + sumTokens(first), kept: consts.length + first.length - drop.length, keptTokens: tokens, book: mainBook(drop) });
+}
+
+function guardAfterLoop(args, map) {
+    if (!settings().guard || !scanCtx) return;
+    const limits = guardLimits();
+    const act = [...map.values()];
+    const tokens = sumTokens(act);
+    if (act.length > limits.maxEntries || tokens > limits.maxTokens) {
+        // already too much (e.g. huge entries): keep the first-activated (most important), stop
+        const { drop, tokens: kept } = trimToLimits(act, limits);
+        for (const e of drop) map.delete(`${e.world}.${e.uid}`);
+        if (args.state) args.state.next = 0;
+        trip({ kind: 'over', would: act.length, wouldTokens: tokens, kept: act.length - drop.length, keptTokens: kept, book: mainBook(drop) });
+        return;
+    }
+    if (!args.state?.next) return;
+    // what would the next recursion loop pull in?
+    const text = (args.new?.successful ?? []).filter(e => !e.preventRecursion).map(e => e.content).join('\n');
+    if (!text) return;
+    const next = wouldFire(scanCtx.all, text, { ...scanCtx.o, scanner: scanCtx.scanner, skip: new Set(act), recursion: true });
+    const nt = sumTokens(next);
+    if (act.length + next.length > limits.maxEntries || tokens + nt > limits.maxTokens) {
+        args.state.next = 0;
+        trip({ kind: 'chain', would: act.length + next.length, wouldTokens: tokens + nt, kept: act.length, keptTokens: tokens, book: mainBook(next) });
+    }
+}
+
+function trip(info) {
+    lastTrip = { ...info, at: Date.now(), chat: St.ctx().chatId ?? '' };
+    console.warn(LOG, 'emergency brake', lastTrip);
+    const key = `${lastTrip.chat}|${info.book}|${info.kind}`;
+    if (tripShown.has(key)) return;
+    tripShown.add(key);
+    const f = n => Number(n).toLocaleString();
+    const what = info.kind === 'chain' ? 'จะดึงเอนทรีเป็นลูกโซ่' : 'เทิร์นนี้จะติด';
+    const did = info.kind === 'chain' ? 'หยุดลูกโซ่ไว้ที่' : 'ตัดเหลือ';
+    toast.warning(`${info.book ? `“${info.book}” ` : ''}${what} ${f(info.would)} เอนทรี ≈${f(info.wouldTokens)} โทเคน · ${did} ${f(info.kept)} เอนทรี ≈${f(info.keptTokens)} โทเคน${info.book ? '\nแตะเพื่อตรวจและซ่อมเล่มนี้' : ''}`,
+        '🛑 Lore Master: เบรกฉุกเฉิน', { timeOut: 15000, extendedTimeOut: 8000, onclick: info.book ? () => { checkBook(info.book); openLM(null, 'doctor'); } : undefined });
+}
+
+/** Warn once per book when the chat uses a lorebook that is huge. */
+const warnedBooks = new Set();
+async function warnBigBooks() {
+    if (!settings().warnBigBooks) return;
+    for (const name of St.usage().keys()) {
+        if (warnedBooks.has(name)) continue;
+        warnedBooks.add(name);
+        try {
+            const data = await W.loadWorldInfo(name);
+            if (!data) continue;
+            const st = bookStats(data);
+            if (st.tokens < 100000 && st.count < 300) continue;
+            toast.warning(`“${name}” มี ${st.count.toLocaleString()} เอนทรี ≈${st.tokens.toLocaleString()} โทเคน ${settings().guard ? 'เบรกฉุกเฉินเปิดอยู่ ST จะไม่ค้าง แต่' : 'เล่มขนาดนี้ทำให้ ST ค้างได้ และ'}ควรตรวจเล่มก่อนเล่น\nแตะเพื่อตรวจ`,
+                'Lore Master: lorebook ใหญ่มาก', { timeOut: 15000, extendedTimeOut: 8000, onclick: () => { checkBook(name); openLM(null, 'doctor'); } });
+        } catch { /* ignore */ }
     }
 }
 
@@ -414,19 +525,22 @@ function setGlossaryPrompt(text) {
 function recentChat() {
     return (St.ctx().chat ?? []).filter(m => !m.is_system && m.mes).slice(-6).map(m => `${m.name}: ${m.mes}`).join('\n');
 }
-/** Before every scan: take glossary entries out of the books (when saving mode is on) and remember their lines. */
+/** Before every scan: glossary saving mode, then the emergency brake. */
 function onEntriesLoaded(lore) {
     glossLines = [];
     setGlossaryPrompt('');
-    if (!settings().glossarySmart || !lore) return;
-    for (const arr of [lore.globalLore, lore.characterLore, lore.chatLore, lore.personaLore]) {
-        if (!Array.isArray(arr)) continue;
-        for (let i = arr.length - 1; i >= 0; i--) {
-            if (!isGlossary(arr[i])) continue;
-            if (!arr[i].disable) glossLines.push(...parseGlossary(arr[i].content));
-            arr.splice(i, 1);
+    if (!lore) return;
+    const arrays = [lore.globalLore, lore.characterLore, lore.chatLore, lore.personaLore].filter(Array.isArray);
+    if (settings().glossarySmart) {
+        for (const arr of arrays) {
+            for (let i = arr.length - 1; i >= 0; i--) {
+                if (!isGlossary(arr[i])) continue;
+                if (!arr[i].disable) glossLines.push(...parseGlossary(arr[i].content));
+                arr.splice(i, 1);
+            }
         }
     }
+    try { guardBeforeScan(arrays); } catch (e) { console.error(LOG, 'emergency brake failed', e); scanCtx = null; }
 }
 
 // ---------------------------------------------------------------- settings drawer + slash command
@@ -498,6 +612,7 @@ function registerCommands() {
     const typing = () => { const a = document.activeElement; return !!a && root?.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
     const rerender = () => { if (UI.open && !typing()) render(); };
     for (const ev of [E.CHAT_CHANGED, E.WORLDINFO_SETTINGS_UPDATED, E.CHARACTER_EDITED].filter(Boolean)) eventSource.on(ev, rerender);
+    if (E.CHAT_CHANGED) eventSource.on(E.CHAT_CHANGED, () => setTimeout(warnBigBooks, 800));
     if (E.WORLDINFO_UPDATED) {
         eventSource.on(E.WORLDINFO_UPDATED, async name => {
             St.statCache.delete(name);
@@ -506,6 +621,6 @@ function registerCommands() {
     }
     // keep the extra launchers alive if the theme / UI rebuilds those parts
     setInterval(() => { if (!document.getElementById('lm_wand') && settings().wand) renderWand(); if (!document.getElementById('lm_wi_btn')) renderWiButton(); }, 4000);
-    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), version: VERSION, lastCut: () => lastCut, glossary: () => glossLines };
+    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), version: VERSION, lastCut: () => lastCut, lastTrip: () => lastTrip, glossary: () => glossLines };
     console.log(LOG, `v${VERSION} ready`);
 })();

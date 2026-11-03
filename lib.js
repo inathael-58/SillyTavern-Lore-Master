@@ -44,7 +44,7 @@ export function parseRegexKey(key) {
 export function estTokens(text) {
     const s = String(text ?? '');
     let thai = 0;
-    for (const ch of s) if (THAI.test(ch)) thai++;
+    for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); if (c >= 0x0E00 && c <= 0x0E7F) thai++; }
     return Math.ceil(thai / 2 + (s.length - thai) / 4);
 }
 
@@ -224,22 +224,86 @@ export function toWorld(entries, { prefixSource = false, template = ENTRY_DEFAUL
 // ---------------------------------------------------------------- matching like SillyTavern
 
 /** Does `key` occur in `text`? Same rules as SillyTavern's matchKeys (non-unicode \W, so Thai keys match inside words). */
+// Big books (500+ entries, megabytes of text) are checked key by key against every entry,
+// so lower-casing and regex building are cached instead of being redone millions of times.
+const lowerCache = new Map();
+function lowered(s) {
+    let l = lowerCache.get(s);
+    if (l === undefined) {
+        if (lowerCache.size > 4000) lowerCache.clear();
+        l = s.toLowerCase();
+        lowerCache.set(s, l);
+    }
+    return l;
+}
+const regexCache = new Map();
+function cachedRegex(key, make) {
+    let r = regexCache.get(key);
+    if (r === undefined) {
+        if (regexCache.size > 4000) regexCache.clear();
+        r = make();
+        regexCache.set(key, r);
+    }
+    return r;
+}
+
 export function keyMatches(text, key, { caseSensitive = false, wholeWords = false } = {}) {
-    const re = parseRegexKey(key);
+    const k = String(key ?? '');
+    const re = cachedRegex(`R${k}`, () => parseRegexKey(k));
     if (re) return re.test(text);
     let hay = String(text ?? '');
-    let needle = String(key ?? '').trim();
+    let needle = k.trim();
     if (!needle) return false;
-    if (!caseSensitive) { hay = hay.toLowerCase(); needle = needle.toLowerCase(); }
-    if (wholeWords) {
-        if (needle.split(/\s+/).length > 1) return hay.includes(needle);
-        return new RegExp(`(?:^|\\W)(${escapeRegex(needle)})(?:$|\\W)`).test(hay);
+    if (!caseSensitive) { hay = lowered(hay); needle = needle.toLowerCase(); }
+    if (!hay.includes(needle)) return false;
+    if (wholeWords && !/\s/.test(needle)) {
+        return cachedRegex(`W${needle}`, () => new RegExp(`(?:^|\\W)(${escapeRegex(needle)})(?:$|\\W)`)).test(hay);
     }
-    return hay.includes(needle);
+    return true;
+}
+
+/**
+ * Finds, in one pass over a text, which entries have a primary key in it. Used instead of
+ * testing every key of every entry one by one, which takes seconds on big books.
+ * The result is a superset (case-insensitive substring); confirm with firingKey().
+ */
+export function keyScanner(entries, names = {}) {
+    const byKey = new Map();   // lower-case key -> entries
+    const regexEntries = [];   // entries with /regex/ keys are always candidates
+    for (const e of entries) {
+        for (const raw of e.key ?? []) {
+            const k = subMacros(raw, names).trim();
+            if (!k) continue;
+            if (parseRegexKey(k)) { regexEntries.push(e); continue; }
+            const lk = k.toLowerCase();
+            if (!byKey.has(lk)) byKey.set(lk, []);
+            byKey.get(lk).push(e);
+        }
+    }
+    const keys = [...byKey.keys()].sort((a, b) => b.length - a.length);
+    // the lookahead finds the longest key starting at each position; shorter keys hidden
+    // inside it ("ken" in "ken kaneki") are added from this table
+    const inside = new Map(keys.map(a => [a, keys.filter(b => b !== a && a.includes(b))]));
+    const re = keys.length ? new RegExp(`(?=(${keys.map(escapeRegex).join('|')}))`, 'g') : null;
+    return text => {
+        const out = new Set(regexEntries);
+        if (!re) return out;
+        const seen = new Set();
+        for (const m of lowered(String(text ?? '')).matchAll(re)) {
+            const k = m[1];
+            if (seen.has(k)) continue;
+            seen.add(k);
+            for (const e of byKey.get(k)) out.add(e);
+            for (const sub of inside.get(k)) if (!seen.has(sub)) { seen.add(sub); for (const e of byKey.get(sub)) out.add(e); }
+        }
+        return out;
+    };
 }
 
 export function subMacros(s, names = {}) {
-    return String(s ?? '')
+    const t = String(s ?? '');
+    if (!t.includes('{{') && !t.includes('<')) return t;
+    return t
         .replace(/\{\{char\}\}|<BOT>/gi, names.char || '{{char}}')
         .replace(/\{\{user\}\}|<USER>/gi, names.user || '{{user}}');
 }
@@ -278,15 +342,20 @@ export function simulate(entries, text, { recursive = true, maxSteps = 0, caseSe
     let recurse = '';
     let step = 0;
     const live = entries.filter(e => !e.disable);
+    const scanner = keyScanner(live.filter(e => !e.constant), names);
+    let chunk = text;
     while (step < 30) {
         step++;
         const now = [];
+        // only entries with a key in the newly added text can newly fire
+        const cand = scanner(chunk);
         for (const e of live) {
             if (done.has(e)) continue;
             if (e.constant) {
                 if (step === 1) now.push({ entry: e, key: null, step, via: 'constant' });
                 continue;
             }
+            if (!cand.has(e)) continue;
             if (step > 1 && (e.excludeRecursion || !recurse)) continue;
             const scan = step === 1 ? text : recurse;
             const k = firingKey(e, scan, opts);
@@ -298,6 +367,7 @@ export function simulate(entries, text, { recursive = true, maxSteps = 0, caseSe
         const more = now.filter(h => !h.entry.preventRecursion).map(h => subMacros(h.entry.content, names)).join('\n');
         if (!more) break;
         recurse = `${recurse}\n${more}`;
+        chunk = more;
     }
     return { hits, tokens: hits.reduce((n, h) => n + estTokens(h.entry.content), 0), steps: step };
 }
@@ -416,6 +486,9 @@ export function diagnose(entries, ctx = {}) {
 
     // 3) keys that are in practically every message: the character's own name, {{user}}, or words in most entries
     const keyFreq = new Map(); // lower key -> number of OTHER entries whose content has it
+    // which entries each content could trigger, found in one pass per content
+    const scanAll = keyScanner(live, names);
+    const reachOf = new Map(live.map(o => [o, scanAll(subMacros(o.content, names))]));
     {
         const changes = [];
         const always = [names.char, names.user, ...String(names.char ?? '').split(/\s+/)].filter(s => s && s.length > 1).map(s => s.toLowerCase());
@@ -430,7 +503,7 @@ export function diagnose(entries, ctx = {}) {
                 else if (always.includes(lk)) reason = 'name';
                 else if (!isWordKey(k)) continue;
                 else {
-                    if (!keyFreq.has(lk)) keyFreq.set(lk, live.filter(o => o !== e && keyMatches(subMacros(o.content, names), k, opts)).length);
+                    if (!keyFreq.has(lk)) keyFreq.set(lk, live.filter(o => o !== e && reachOf.get(o).has(e) && keyMatches(subMacros(o.content, names), k, opts)).length);
                     if (keyFreq.get(lk) >= minShare) reason = 'everywhere';
                 }
                 if (!reason) continue;
@@ -522,7 +595,8 @@ export function diagnose(entries, ctx = {}) {
         for (const e of live) {
             if (e.preventRecursion) continue;
             const text = subMacros(e.content, names);
-            const out = live.filter(o => o !== e && !o.constant && !o.excludeRecursion && firingKey(o, text, opts) !== null);
+            const cand = reachOf.get(e);
+            const out = live.filter(o => o !== e && cand.has(o) && !o.constant && !o.excludeRecursion && firingKey(o, text, opts) !== null);
             if (out.length) links.set(e, out);
         }
         if (links.size) {
@@ -532,7 +606,9 @@ export function diagnose(entries, ctx = {}) {
                 while (queue.length) for (const n of links.get(queue.shift()) ?? []) if (!seen.has(n)) { seen.add(n); queue.push(n); }
                 return seen.size - 1;
             };
-            const ranked = [...links.keys()].map(e => ({ e, n: reach(e) })).sort((a, b) => b.n - a.n);
+            // the full reach of every entry is slow on big books; the biggest chains start at the entries that link most
+            const ranked = [...links.keys()].sort((a, b) => links.get(b).length - links.get(a).length).slice(0, 40)
+                .map(e => ({ e, n: reach(e) })).sort((a, b) => b.n - a.n);
             const top = ranked[0];
             issues.push({
                 id: 'recursion', short: 'ตัดลูกโซ่ recursion', severity: ctx.recursive === false ? 'mid' : 'high',
@@ -987,4 +1063,74 @@ export function cleanCondensed(text, original) {
     if (estTokens(t) >= estTokens(original) * 0.95 || estTokens(t) < Math.min(20, estTokens(original) * 0.1)) return null;
     for (const m of ['{{char}}', '{{user}}']) if (String(original).includes(m) && !t.includes(m)) return null;
     return t;
+}
+
+// ---------------------------------------------------------------- character card PNG
+
+/** The character card JSON inside a PNG (tEXt chunk "ccv3", else "chara"), or null. */
+export function cardFromPng(buffer) {
+    const b = new Uint8Array(buffer);
+    const sig = [137, 80, 78, 71, 13, 10, 26, 10];
+    if (b.length < 8 || sig.some((v, i) => b[i] !== v)) return null;
+    const view = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const found = {};
+    for (let i = 8; i + 8 <= b.length;) {
+        const len = view.getUint32(i);
+        const type = String.fromCharCode(b[i + 4], b[i + 5], b[i + 6], b[i + 7]);
+        if (type === 'tEXt') {
+            const body = b.subarray(i + 8, i + 8 + len);
+            const z = body.indexOf(0);
+            const key = new TextDecoder('latin1').decode(body.subarray(0, z)).toLowerCase();
+            if (key === 'ccv3' || key === 'chara') found[key] = new TextDecoder('latin1').decode(body.subarray(z + 1));
+        }
+        if (type === 'IEND') break;
+        i += 12 + len;
+    }
+    const b64 = found.ccv3 ?? found.chara;
+    if (!b64) return null;
+    const bin = atob(b64.trim());
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return JSON.parse(new TextDecoder('utf-8').decode(bytes));
+}
+
+// ---------------------------------------------------------------- emergency brake (runtime)
+
+/**
+ * Keep entries in priority order until either limit is reached. Constant entries are always
+ * kept (they are part of the book's design and usually small); the rest are dropped.
+ * @param {any[]} list entries in priority order (most important first)
+ * @param {{maxEntries:number, maxTokens:number}} limits
+ */
+export function trimToLimits(list, { maxEntries, maxTokens }) {
+    const keep = [], drop = [];
+    let n = 0, tokens = 0;
+    for (const e of list) if (e.constant) { keep.push(e); n++; tokens += estTokens(e.content); }
+    for (const e of list) {
+        if (e.constant) continue;
+        const t = estTokens(e.content);
+        if (n + 1 > maxEntries || tokens + t > maxTokens) { drop.push(e); continue; }
+        keep.push(e); n++; tokens += t;
+    }
+    return { keep, drop, tokens };
+}
+
+/** SillyTavern's own priority: higher `order` first. */
+export const byPriority = (a, b) => (Number(b.order) || 0) - (Number(a.order) || 0);
+
+/**
+ * Entries that would fire on `text` (first scan: chat), using the one-pass scanner.
+ * Probability, groups and timed effects are ignored (worst case).
+ */
+export function wouldFire(entries, text, { names = {}, caseSensitive = false, wholeWords = false, scanner = null, skip = null, recursion = false } = {}) {
+    const scan = scanner ?? keyScanner(entries.filter(e => !e.constant && !e.disable), names);
+    const cand = scan(text);
+    const opts = { names, caseSensitive, wholeWords };
+    const out = [];
+    for (const e of entries) {
+        if (e.disable || e.constant || !cand.has(e) || skip?.has(e)) continue;
+        if (recursion && e.excludeRecursion) continue;
+        if (firingKey(e, text, opts) !== null) out.push(e);
+    }
+    return out;
 }

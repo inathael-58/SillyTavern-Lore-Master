@@ -28,7 +28,8 @@ const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric:
 /** Hooks the doctor module fills in (avoids a circular import). */
 export const hooks = { checkBook: async () => {}, importFiles: async () => {}, mergeBooks: () => {}, thaiBook: async () => {}, condenseBook: async () => {} };
 
-const L = { q: '', bookQ: '', filter: 'all', sort: 'book', selecting: false, selected: new Set(), focus: null };
+const PAGE = 60; // entry cards shown at once (books with 500+ entries stay fast)
+const L = { q: '', bookQ: '', filter: 'all', sort: 'book', selecting: false, selected: new Set(), focus: null, limit: PAGE };
 
 const USE_TAGS = {
     chat: ['fa-comment', 'แชทนี้'],
@@ -171,7 +172,7 @@ async function newMenu() {
         title: 'เพิ่มเล่ม',
         items: [
             { value: 'new', label: 'สร้างเล่มเปล่า', icon: 'fa-file-circle-plus' },
-            { value: 'import', label: 'นำเข้าไฟล์ .json', icon: 'fa-file-import', hint: 'ไฟล์ของ ST, JanitorAI, character_book หรือการ์ด — ตรวจและซ่อมก่อนบันทึก' },
+            { value: 'import', label: 'นำเข้าไฟล์ .json / การ์ด .png', icon: 'fa-file-import', hint: 'ไฟล์ของ ST, JanitorAI, character_book หรือ lorebook ในการ์ด — ตรวจและซ่อมก่อนบันทึก' },
             { value: 'merge', label: 'รวมหลายเล่มเป็นเล่มเดียว', icon: 'fa-object-group' },
         ],
     });
@@ -191,7 +192,7 @@ async function newMenu() {
         } catch (e) { toast.error(String(e?.message ?? e)); }
     }
     if (v === 'import') {
-        const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json', multiple: true });
+        const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json,.png,image/png', multiple: true });
         input.addEventListener('change', () => hooks.importFiles([...input.files]));
         input.click();
     }
@@ -211,7 +212,7 @@ const FILTERS = {
 
 export async function enterBook(name) {
     if (St.cur?.name !== name) {
-        L.bookQ = ''; L.filter = 'all'; L.selecting = false; L.selected.clear();
+        L.bookQ = ''; L.filter = 'all'; L.selecting = false; L.selected.clear(); L.limit = PAGE;
     }
     await St.openBook(name);
 }
@@ -249,7 +250,8 @@ export function viewBook(v) {
             const n = k === 'all' ? all.length : all.filter(f.fn).length;
             return `<button class="lm_fchip ${L.filter === k ? 'lm_on' : ''}" data-act="book-filter" data-k="${k}" ${!n && k !== 'all' ? 'disabled' : ''}>${f.label} <b>${n}</b></button>`;
         }).join('')}</div>
-        <div class="lm_entries">${list.length ? list.map(e => entryCard(e, wc)).join('') : `<div class="lm_empty">${icon('fa-feather')}<div>${all.length ? 'ไม่เจอเอนทรีที่ตรง' : 'เล่มนี้ยังว่าง กด + เพื่อเพิ่มเอนทรีแรก'}</div></div>`}</div>
+        <div class="lm_entries">${list.length ? list.slice(0, L.limit).map(e => entryCard(e, wc)).join('') : `<div class="lm_empty">${icon('fa-feather')}<div>${all.length ? 'ไม่เจอเอนทรีที่ตรง' : 'เล่มนี้ยังว่าง กด + เพื่อเพิ่มเอนทรีแรก'}</div></div>`}</div>
+        ${list.length > L.limit ? `<div class="lm_row lm_centerrow"><button class="lm_btn" data-act="book-more">${icon('fa-angles-down')} แสดงเพิ่ม (อีก ${list.length - L.limit})</button></div>` : ''}
         <div class="lm_bottom_pad"></div>
         ${L.selecting ? selectBar(list) : `<button class="lm_fab" data-act="entry-new" aria-label="เพิ่มเอนทรี">${icon('fa-plus')}</button>`}`,
     };
@@ -726,7 +728,8 @@ act('click', {
     openbook: async el => { push({ v: 'book', name: el.dataset.name }); },
     bookmenu: el => bookMenu(el.dataset.name),
     'book-select': () => { L.selecting = !L.selecting; L.selected.clear(); shell.render(); },
-    'book-filter': el => { L.filter = el.dataset.k; shell.render(); },
+    'book-filter': el => { L.filter = el.dataset.k; L.limit = PAGE; shell.render(); },
+    'book-more': () => { L.limit += PAGE * 2; shell.render(); },
     'book-sort': async () => {
         const v = await sheet({ title: 'เรียงตาม', items: Object.entries(SORTS).map(([k, s]) => ({ value: k, label: s.label, on: L.sort === k })) });
         if (v) { L.sort = v; shell.render(); }
@@ -900,7 +903,7 @@ act('input', {
             const list = St.entryList().filter(FILTERS[L.filter].fn).filter(e => entryMatches(e, L.bookQ));
             if (L.sort !== 'book') list.sort(SORTS[L.sort].fn);
             const box = shell.root?.querySelector('.lm_entries');
-            if (box) box.innerHTML = list.length ? list.map(e => entryCard(e, wc)).join('') : `<div class="lm_empty">${icon('fa-feather')}<div>ไม่เจอเอนทรีที่ตรง</div></div>`;
+            if (box) box.innerHTML = list.length ? list.slice(0, L.limit).map(e => entryCard(e, wc)).join('') : `<div class="lm_empty">${icon('fa-feather')}<div>ไม่เจอเอนทรีที่ตรง</div></div>`;
         }, 150);
     },
     'chip-in': el => { if (/[,，、\n]/.test(el.value)) { const v = el.value; el.value = ''; addChips(el.dataset.field, v); } },

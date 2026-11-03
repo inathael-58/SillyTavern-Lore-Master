@@ -19,6 +19,11 @@ export const DEFAULTS = {
     glossarySmart: true,         // send only the glossary names that matter this turn
     condenseRatio: 0.5,          // AI condense: target share of the original length
     ai: { sources: ['main'], timeoutSec: 90 },
+    // emergency brake against lorebooks that pull in hundreds of entries in one turn
+    guard: true,
+    guardMaxEntries: 40,
+    guardMaxTokens: 25000,
+    warnBigBooks: true,
 };
 
 export function settings() {
