@@ -562,3 +562,7 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_status .lm_ok > i { color: var(--lm-good); }
 #lm_root .lm_status .lm_bad { color: var(--lm-high); }
 #lm_root .lm_statbooks { padding-left: 26px; }
+#lm_settings .lm_vertag { font-weight: 400; opacity: 0.65; margin-left: 4px; }
+#lm_settings .lm_verline, #lm_root .lm_status [data-lm-remote] { font-size: 0.9em; opacity: 0.85; }
+#lm_settings .lm_verline { margin: 2px 0 6px; }
+#lm_settings .lm_stale, #lm_root .lm_stale { color: #f5a524; font-weight: 600; }

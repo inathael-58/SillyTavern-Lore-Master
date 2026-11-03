@@ -111,7 +111,8 @@ function statusBlock() {
     if (cap > 0) budget = Math.min(budget, cap);
     const s = st.scan;
     return `
-      <div class="lm_statrow">${icon('fa-book-atlas')} Lore Master v${esc(lm?.version ?? '?')}</div>
+      <div class="lm_statrow">${icon('fa-book-atlas')} Lore Master ที่รันอยู่: <b>v${esc(lm?.version ?? '?')}</b> <span data-lm-remote>${!lm?.remote?.() ? '' : lm.isStale() ? `· ติดตั้งไว้ <b>v${esc(lm.remote())}</b> <span class="lm_stale">ยังไม่ได้โหลด กด “โหลดเวอร์ชันล่าสุด”</span>` : '· เป็นเวอร์ชันล่าสุดที่ติดตั้งไว้แล้ว'}</span>
+        <div class="lm_row lm_wrap lm_mini"><button class="lm_btn" data-act="s-vcheck">${icon('fa-magnifying-glass')} เช็คเวอร์ชัน</button><button class="lm_btn" data-act="s-reload">${icon('fa-rotate')} โหลดเวอร์ชันล่าสุด</button></div></div>
       ${ok(st.events.before && st.events.after, 'เชื่อมกับการสแกน World Info ของ ST ได้ (เบรกฉุกเฉินและโหมดประหยัดทำงานได้)', `ST รุ่นนี้ไม่มี event ${[!st.events.before && 'WORLDINFO_ENTRIES_LOADED', !st.events.after && 'WORLDINFO_SCAN_DONE'].filter(Boolean).join(', ')} เบรกฉุกเฉินทำงานไม่ได้ ต้องอัปเดต ST`)}
       ${s ? `<div class="lm_statrow">${icon('fa-magnifying-glass')} สแกนล่าสุด ${new Date(s.at).toLocaleTimeString()}: ติด <b>${f(s.count)}</b> เอนทรี ≈<b>${f(s.tokens)}</b> โทเคน (จาก ${f(s.loaded)} เอนทรีที่โหลด)${s.braked ? ' · <b>เบรกทำงาน</b>' : ''}</div>
         ${Object.keys(s.books).length ? `<div class="lm_dim lm_statbooks">${Object.entries(s.books).map(([b, n]) => `${esc(b)}: ${n}`).join(' · ')}</div>` : ''}`
@@ -188,6 +189,15 @@ act('click', {
         } catch (e) { toast.error(String(e?.message ?? e), 'เชื่อมต่อไม่ได้'); }
         testing = false; shell.render();
     },
+    's-vcheck': async () => {
+        const remote = await shell.checkVersion?.();
+        const cur = globalThis.LoreMaster?.version;
+        if (!remote) toast.warning('อ่านเวอร์ชันบนเซิร์ฟเวอร์ไม่ได้');
+        else if (remote === cur) toast.success(`รัน v${cur} อยู่ ตรงกับที่ติดตั้งไว้แล้ว`);
+        else toast.info(`ติดตั้งไว้ v${remote} แต่หน้านี้รัน v${cur} กด “โหลดเวอร์ชันล่าสุด”`);
+        shell.render();
+    },
+    's-reload': () => shell.reload?.(),
     's-ratio': el => { settings().condenseRatio = Number(el.dataset.v); save(); shell.render(); },
     's-gx': el => { St.setGlobal(el.dataset.name, false); shell.render(); },
     's-gadd': async () => {

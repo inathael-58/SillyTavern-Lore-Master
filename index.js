@@ -26,7 +26,10 @@ import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor,
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.4.1';
+const VERSION = '0.4.2'; // keep in sync with manifest.json
+const BASE_URL = new URL('.', import.meta.url);
+/** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
+const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'editor.js', 'doctor.js', 'settingsview.js', 'style.css', 'manifest.json'];
 const W = St.WIref;
 
 hooks.checkBook = checkBook;
@@ -562,19 +565,80 @@ function mountSettings() {
     div.id = 'lm_settings';
     div.innerHTML = `
     <div class="inline-drawer">
-      <div class="inline-drawer-toggle inline-drawer-header"><b>Lore Master</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
+      <div class="inline-drawer-toggle inline-drawer-header"><b>Lore Master <small class="lm_vertag">v${VERSION}</small></b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div>
       <div class="inline-drawer-content">
         <div class="lm_drawer_btns">
           <div class="menu_button" data-lm="books"><i class="fa-solid fa-book-atlas"></i> เปิด Lore Master</div>
           <div class="menu_button" data-lm="doctor"><i class="fa-solid fa-stethoscope"></i> ตรวจ & รวม</div>
           <div class="menu_button" data-lm="settings"><i class="fa-solid fa-gear"></i> ตั้งค่า</div>
+          <div class="menu_button" data-lm-reload title="ดึงไฟล์ของ Lore Master จากเซิร์ฟเวอร์ใหม่ทั้งหมดแล้วโหลดหน้าใหม่"><i class="fa-solid fa-rotate"></i> โหลดเวอร์ชันล่าสุด</div>
         </div>
+        <div class="lm_verline">ที่รันอยู่: <b>v${VERSION}</b> <span data-lm-remote></span></div>
         <small>จัดการ lorebook แทนหน้า World Info ของ ST · ตั้งค่าทางเข้าได้ในหน้า ตั้งค่า ของ Lore Master · พิมพ์ <code>/lore</code></small>
       </div>
     </div>`;
     host.appendChild(div);
-    div.addEventListener('click', e => { const t = e.target.closest('[data-lm]'); if (t) openLM(null, t.dataset.lm); });
+    div.addEventListener('click', e => {
+        if (e.target.closest('[data-lm-reload]')) return reloadWithFreshFiles();
+        const t = e.target.closest('[data-lm]');
+        if (t) openLM(null, t.dataset.lm);
+    });
+    checkForNewVersion(true);
 }
+
+// ---------------------------------------------------------------- version check + hard refresh
+//
+// SillyTavern loads extension files by a fixed URL, and browsers (and home-screen web apps on
+// iOS, which rarely reload for real) keep the old files cached after "Update". Compare with the
+// manifest on the server; if it is newer, say so, and offer to refetch every file and reload.
+
+let remoteVersion = '';
+let versionCheckedAt = 0;
+let versionToastShown = false;
+const newer = (a, b) => {
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+    return false;
+};
+async function fetchRemoteVersion() {
+    try {
+        const res = await fetch(new URL('manifest.json', BASE_URL), { cache: 'no-store' });
+        if (!res.ok) return '';
+        return String((await res.json())?.version ?? '');
+    } catch { return ''; }
+}
+function showRemote() {
+    const stale = remoteVersion && newer(remoteVersion, VERSION);
+    document.querySelectorAll('[data-lm-remote]').forEach(el => {
+        el.innerHTML = !remoteVersion ? '' : stale ? `· ติดตั้งไว้ <b>v${esc(remoteVersion)}</b> <span class="lm_stale">ยังไม่ได้โหลด กด “โหลดเวอร์ชันล่าสุด”</span>` : '· เป็นเวอร์ชันล่าสุดที่ติดตั้งไว้แล้ว';
+    });
+}
+export async function checkForNewVersion(force = false) {
+    if (!force && Date.now() - versionCheckedAt < 10 * 60_000) return remoteVersion;
+    versionCheckedAt = Date.now();
+    remoteVersion = await fetchRemoteVersion();
+    showRemote();
+    if (remoteVersion && newer(remoteVersion, VERSION) && !versionToastShown) {
+        versionToastShown = true;
+        toast.info(`ติดตั้ง v${esc(remoteVersion)} ไว้แล้ว แต่หน้านี้ยังรัน v${VERSION} อยู่<br>แตะที่นี่เพื่อโหลดเวอร์ชันใหม่`, 'Lore Master', {
+            timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false, onclick: () => reloadWithFreshFiles(),
+        });
+    }
+    return remoteVersion;
+}
+async function reloadWithFreshFiles() {
+    try {
+        await St.flush();
+        toast.info('กำลังดึงไฟล์ใหม่…', 'Lore Master', { timeOut: 2000 });
+        // cache: 'reload' fetches from the server and overwrites the browser's cached copy,
+        // so the page reload below runs the new files
+        await Promise.all(FILES.map(f => fetch(new URL(f, BASE_URL), { cache: 'reload' }).catch(() => null)));
+    } finally {
+        location.reload();
+    }
+}
+shell.reload = reloadWithFreshFiles;
+shell.checkVersion = async () => { await checkForNewVersion(true); return remoteVersion; };
 
 function registerCommands() {
     try {
@@ -630,7 +694,9 @@ function registerCommands() {
         });
     }
     // keep the extra launchers alive if the theme / UI rebuilds those parts
+    setTimeout(() => checkForNewVersion(), 3000);
+    if (E.CHAT_CHANGED) eventSource.on(E.CHAT_CHANGED, () => checkForNewVersion());
     setInterval(() => { if (!document.getElementById('lm_wand') && settings().wand) renderWand(); if (!document.getElementById('lm_wi_btn')) renderWiButton(); }, 4000);
-    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), version: VERSION, lastCut: () => lastCut, lastTrip: () => lastTrip, glossary: () => glossLines, status: () => ({ ...status, events: { before: !!E.WORLDINFO_ENTRIES_LOADED, after: !!E.WORLDINFO_SCAN_DONE } }) };
+    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), version: VERSION, lastCut: () => lastCut, lastTrip: () => lastTrip, glossary: () => glossLines, remote: () => remoteVersion, isStale: () => !!remoteVersion && newer(remoteVersion, VERSION), status: () => ({ ...status, events: { before: !!E.WORLDINFO_ENTRIES_LOADED, after: !!E.WORLDINFO_SCAN_DONE } }) };
     console.log(LOG, `v${VERSION} ready`);
 })();
