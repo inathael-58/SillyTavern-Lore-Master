@@ -6,7 +6,7 @@
 import {
     readLorebook, mergeBooks, diagnose, applyChanges, simulate, summarize, toWorld,
     estTokens, FORMAT_LABEL, POSITION, cardFromPng, LONG_TOKENS, THAI, cleanKeys, isGlossary, upsertGlossaryList, glossaryLines,
-    THAI_KEY_SYSTEM, thaiKeyRequest, parseThaiKeys, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
+    keyPlan, THAI_KEY_SYSTEM, thaiKeyRequest, parseThaiKeys, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
 } from './lib.js';
 import * as St from './store.js';
 import { settings, save } from './prefs.js';
@@ -232,21 +232,51 @@ function viewFix() {
         live = `<div class="lm_card lm_live"><div class="lm_dim">ลองกับข้อความล่าสุดในแชทที่เปิดอยู่ (recursion ${o.recursive ? 'เปิด' : 'ปิด'})</div>${vs(simMemo(S.base, sample, o), simMemo(S.work, sample, o))}</div>`;
     }
     const checkedTotal = S.issues.reduce((n, i) => n + i.changes.filter(c => c.checked).length, 0);
+    const safeTotal = S.issues.filter(i => i.kind === 'safe').reduce((n, i) => n + i.changes.filter(c => c.checked).length, 0);
+    plan = keyPlan(S.work, S.issues.flatMap(i => i.changes));
     return `
     <div class="lm_stats">
       <div><b>${sum.count}</b><span>เอนทรี</span></div><div><b>≈${fmt(sum.tokens)}</b><span>โทเคนทั้งเล่ม</span></div>
       <div><b>${sum.constant}</b><span>ติดตลอด</span></div><div><b>${sum.thaiKeys}</b><span>มีคีย์ไทย</span></div>
     </div>
     ${live}
-    <div class="lm_row lm_wrap lm_sticky">
-      <button class="lm_btn lm_primary" data-act="d-fixall" ${checkedTotal ? '' : 'disabled'}>${icon('fa-wand-magic-sparkles')} ซ่อมทุกข้อที่ติ๊กไว้ (${checkedTotal})</button>
-      <button class="lm_btn" data-act="d-undo" ${S.history.length ? '' : 'disabled'}>${icon('fa-rotate-left')} ย้อน</button>
+    ${guideCard()}
+    <div class="lm_fixbar lm_sticky">
+      <button class="lm_btn" data-act="d-fixsafe" ${safeTotal ? '' : 'disabled'} title="ซ่อมเฉพาะข้อที่ไม่แตะคีย์: ลูกโซ่ ติดตลอด เรื่องซ้ำ รูปแบบคีย์">${icon('fa-shield-halved')} ไม่แตะคีย์ (${safeTotal})</button>
+      <button class="lm_btn lm_primary" data-act="d-fixall" ${checkedTotal ? '' : 'disabled'} title="ซ่อมทุกข้อที่ติ๊กไว้ รวมข้อที่แก้คีย์">${icon('fa-wand-magic-sparkles')} ทุกข้อที่ติ๊ก (${checkedTotal})</button>
+      <button class="lm_icon lm_undo" data-act="d-undo" ${S.history.length ? '' : 'disabled'} title="ย้อน" aria-label="ย้อน">${icon('fa-rotate-left')}</button>
     </div>
     ${S.applied.length ? `<div class="lm_card lm_done"><b>${icon('fa-check')} ซ่อมแล้ว</b><ul>${S.applied.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
       <button class="lm_btn lm_primary" data-act="d-step" data-step="save">ไปบันทึก ${icon('fa-arrow-right')}</button></div>` : ''}
     ${aiTools()}
     ${S.issues.filter(i => i.id !== 'thai' && i.id !== 'big').map(viewIssue).join('') || `<div class="lm_empty">${icon('fa-circle-check')}<div>ไม่เจอปัญหาแล้ว</div></div>`}
     <p class="lm_hint">ทุกอย่างยังอยู่ในหน้านี้ ยังไม่ได้แก้ไฟล์จริงจนกว่าจะกดบันทึก</p>`;
+}
+
+let plan = new Map(); // uid -> combined effect of all ticked key changes
+
+function guideCard() {
+    const open = S.guideOpen ?? !S.applied.length;
+    return `
+    <details class="lm_card lm_guide" ${open ? 'open' : ''} data-guide>
+      <summary>${icon('fa-circle-question')} <b>อ่านก่อนซ่อม</b> <small>ลำดับที่แนะนำ และข้อไหนขัดกันได้</small></summary>
+      <ol class="lm_guide_list">
+        <li><b>ซ่อมแบบไม่แตะคีย์ก่อน</b> (ปุ่ม ${icon('fa-shield-halved')} <b>ไม่แตะคีย์</b>) คือข้อที่มีป้าย <span class="lm_kind lm_kind_safe">ไม่แตะคีย์</span> เช่น ลูกโซ่ ติดตลอด เรื่องซ้ำ แค่นี้ก็แก้การติดทีละหลายสิบเอนทรีได้เกือบหมด และไม่มีข้อเสียต่อการติดของเอนทรี</li>
+        <li><b>ดูผล</b> ที่การ์ด “ลองกับข้อความล่าสุด” ด้านบน หรือแท็บ <b>ทดสอบ</b> ถ้าจำนวนเอนทรีที่ติดพอดีแล้ว จะหยุดตรงนี้ก็ได้</li>
+        <li><b>ค่อยดูข้อที่มีป้าย <span class="lm_kind lm_kind_keys">แก้คีย์</span></b> การลบคีย์มีข้อเสียเสมอ คือแชทพูดคำนั้นแล้วเอนทรีจะไม่ติด แต่ละข้อบอกไว้ว่าเสียอะไร ติ๊กไว้ให้เฉพาะที่ค่อนข้างปลอดภัย ที่เหลือเลือกเอง</li>
+      </ol>
+      <div class="lm_hint">${icon('fa-link')} <b>ข้อที่เกี่ยวกัน:</b> “คีย์ที่อยู่ในเนื้อหาของเอนทรีอื่นจำนวนมาก” เป็นผลของลูกโซ่ ซ่อมลูกโซ่แล้วข้อนี้หายเอง ไม่ต้องลบคีย์ · หลายข้ออาจลบคีย์ของเอนทรีเดียวกัน แต่ละบรรทัดจึงบอกว่า <b>รวมทุกข้อที่ติ๊กแล้วจะเหลือคีย์อะไร</b> ถ้าจะไม่เหลือเลย Lore Master เก็บคีย์สุดท้ายไว้ให้</div>
+      <div class="lm_hint">${icon('fa-floppy-disk')} ยังไม่แก้ไฟล์จริงจนกว่าจะกดบันทึก กด <b>ย้อน</b> ได้ทุกขั้น</div>
+    </details>`;
+}
+
+function changeExtra(c) {
+    if (c.op !== 'removeKey') return '';
+    const p = plan.get(c.uid);
+    if (!p) return '';
+    if (!c.checked) return `<small class="lm_keyleft">ถ้าติ๊ก: ลบ “${esc(c.key)}”</small>`;
+    if (p.kept === c.key) return `<small class="lm_keyleft lm_keyleft_warn">${icon('fa-triangle-exclamation')} ติ๊กทุกข้อรวมกันแล้วจะไม่เหลือคีย์ จะเก็บ “${esc(c.key)}” ไว้ให้</small>`;
+    return `<small class="lm_keyleft">เหลือคีย์: ${p.after.length ? p.after.map(k => `<span>${esc(k)}</span>`).join(' ') : '—'}</small>`;
 }
 
 function viewIssue(i) {
@@ -257,12 +287,15 @@ function viewIssue(i) {
     return `
     <section class="lm_card lm_issue ${cls}">
       <div class="lm_issue_head"><span class="lm_sev">${label}</span><h4>${esc(i.title)}</h4></div>
-      <p class="lm_why">${esc(i.why)}</p>
+      ${i.kind ? `<span class="lm_kind lm_kind_${i.kind}">${i.kind === 'safe' ? `${icon('fa-shield-halved')} ไม่แตะคีย์` : `${icon('fa-key')} แก้คีย์ — มีข้อเสีย อ่านก่อน`}</span>` : ''}
+      <p class="lm_why"><b>ทำไม:</b> ${esc(i.why)}</p>
+      ${i.fix ? `<p class="lm_why"><b>ถ้าซ่อม:</b> ${esc(i.fix)}</p>` : ''}
+      ${i.tradeoff ? `<p class="lm_why lm_tradeoff"><b>ข้อควรรู้:</b> ${esc(i.tradeoff)}</p>` : ''}
       ${i.examples?.length ? `<ul class="lm_ex">${i.examples.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
       ${i.changes.length ? `
         ${i.changes.length > 1 ? `<div class="lm_row lm_mini"><button class="lm_link" data-act="d-checkall" data-issue="${i.id}" data-v="1">เลือกทั้งหมด</button><button class="lm_link" data-act="d-checkall" data-issue="${i.id}" data-v="0">ไม่เลือกเลย</button></div>` : ''}
         <div class="lm_changes">${shown.map(c => `
-          <label class="lm_checkrow"><input type="checkbox" data-act="d-check" data-id="${c.id}" ${c.checked ? 'checked' : ''}><span>${esc(c.label)}</span></label>`).join('')}
+          <label class="lm_checkrow"><input type="checkbox" data-act="d-check" data-id="${c.id}" ${c.checked ? 'checked' : ''}><span>${esc(c.label)}${changeExtra(c)}</span></label>`).join('')}
         </div>
         ${i.changes.length > 6 ? `<button class="lm_link" data-act="d-expand" data-issue="${i.id}">${open ? 'ย่อ' : `ดูทั้งหมด (${i.changes.length})`}</button>` : ''}
         <button class="lm_btn" data-act="d-fixone" data-issue="${i.id}" ${on ? '' : 'disabled'}>${icon('fa-wrench')} ซ่อมข้อนี้ (${on})</button>` : ''}
@@ -482,6 +515,8 @@ function applyFix(issueIds) {
     if (!changes.length) return;
     S.history.push({ work: S.work, applied: [...S.applied] });
     S.work = applyChanges(S.work, changes);
+    const kept = S.work.keptKeys ?? [];
+    if (kept.length) toast.info(`${kept.length} เอนทรีจะไม่เหลือคีย์เลย จึงเก็บคีย์สุดท้ายไว้ให้: ${kept.slice(0, 5).map(k => `${k.name} (“${k.key}”)`).join(', ')}${kept.length > 5 ? ' …' : ''}`, 'Lore Master', { timeOut: 9000 });
     for (const i of picked) {
         const n = i.changes.filter(c => c.checked).length;
         if (n) S.applied.push(`${i.short ?? i.title} — ${n} รายการ`);
@@ -645,6 +680,7 @@ act('click', {
     },
     'd-rmsrc': el => { S.sources = S.sources.filter(s => s.id !== Number(el.dataset.id)); rebuild(); shell.render(); },
     'd-fixall': () => applyFix(S.issues.map(i => i.id)),
+    'd-fixsafe': () => applyFix(S.issues.filter(i => i.kind === 'safe').map(i => i.id)),
     'd-thai': () => startThai(),
     'd-stop': () => { S.job?.abort.abort(); },
     'd-sug': el => {
@@ -728,5 +764,10 @@ act('change', {
     'd-unlink': el => { S.unlinkOld = el.checked; },
     'd-capon': el => { S.capOn = el.checked; },
 });
+
+/** Remember whether the guide was opened or closed, across re-renders. */
+export function onDoctorToggle(ev) {
+    if (ev.target?.matches?.('[data-guide]')) S.guideOpen = ev.target.open;
+}
 
 export function initDoctor() { S.capN = settings().defaultCap; }

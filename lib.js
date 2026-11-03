@@ -441,7 +441,9 @@ export function diagnose(entries, ctx = {}) {
             }
         }
         if (changes.length) issues.push({
-            id: 'messy', short: 'จัดรูปแบบคีย์', severity: 'low', title: `คีย์รูปแบบเพี้ยน ${changes.length} จุด`,
+            id: 'messy', kind: 'safe', short: 'จัดรูปแบบคีย์', severity: 'low',
+            fix: 'แยกคีย์ที่รวมอยู่ในช่องเดียว ตัดเครื่องหมายคำพูด และลบตัวซ้ำ',
+            tradeoff: 'ไม่มีข้อเสีย คำที่ตั้งใจไว้ยังอยู่ครบ', title: `คีย์รูปแบบเพี้ยน ${changes.length} จุด`,
             why: 'มีคีย์ที่หลายคำรวมอยู่ในช่องเดียว (เช่น "Noel, Noely") มีเครื่องหมายคำพูดติดมา หรือซ้ำกัน ST จะมองทั้งก้อนเป็นคำเดียว เลยไม่เคยติด',
             changes,
         });
@@ -476,7 +478,9 @@ export function diagnose(entries, ctx = {}) {
             }
         }
         if (changes.length) issues.push({
-            id: 'dupes', short: 'รวมเอนทรีที่ซ้ำกัน', severity: 'mid', title: `เรื่องเดียวกันเขียนไว้ 2 ที่ ${changes.length} คู่`,
+            id: 'dupes', kind: 'safe', short: 'รวมเอนทรีที่ซ้ำกัน', severity: 'mid',
+            fix: 'รวมเนื้อหาของทั้งสองไว้ในเอนทรีที่ยาวกว่า และรวมคีย์ของทั้งสอง ตัวที่สั้นกว่าถูกลบ',
+            tradeoff: 'เอนทรีที่รวมแล้วยาวขึ้น แต่ไม่ติดซ้ำ 2 ที่ และไม่มีข้อมูลขัดกัน ตรวจเฉพาะข้ามเล่ม ในเล่มเดียวกันคนเขียนมักตั้งใจแยกหัวข้อ', title: `เรื่องเดียวกันเขียนไว้ 2 ที่ ${changes.length} คู่`,
             why: 'คีย์ของทั้งสองตัวทับกัน พอพูดถึงเรื่องนี้จะติดทั้งคู่ กินโทเคน 2 เท่า และถ้าเนื้อหาไม่ตรงกัน โมเดลจะสับสน รวมเป็นเอนทรีเดียว: เอาเนื้อหามาต่อกันและรวมคีย์',
             changes,
         });
@@ -493,6 +497,7 @@ export function diagnose(entries, ctx = {}) {
         const changes = [];
         const always = [names.char, names.user, ...String(names.char ?? '').split(/\s+/)].filter(s => s && s.length > 1).map(s => s.toLowerCase());
         const minShare = Math.max(4, Math.ceil(live.length * 0.4));
+        const hub = [];
         for (const e of live) {
             if (e.constant) continue;
             for (const k of e.key ?? []) {
@@ -503,18 +508,32 @@ export function diagnose(entries, ctx = {}) {
                 else if (always.includes(lk)) reason = 'name';
                 else if (!isWordKey(k)) continue;
                 else {
-                    if (!keyFreq.has(lk)) keyFreq.set(lk, live.filter(o => o !== e && reachOf.get(o).has(e) && keyMatches(subMacros(o.content, names), k, opts)).length);
+                    // only contents that still recurse can pull this entry in
+                    if (!keyFreq.has(lk)) keyFreq.set(lk, live.filter(o => o !== e && !o.preventRecursion && reachOf.get(o).has(e) && keyMatches(subMacros(o.content, names), k, opts)).length);
                     if (keyFreq.get(lk) >= minShare) reason = 'everywhere';
                 }
                 if (!reason) continue;
                 const left = (e.key ?? []).filter(x => x !== k).length;
-                const why = reason === 'macro' ? 'ชื่อผู้เล่น/ตัวละครหลัก' : reason === 'name' ? 'ชื่อตัวละครหลัก' : `อยู่ในเนื้อหาของ ${keyFreq.get(lk)} เอนทรี`;
-                changes.push(change({ op: 'removeKey', uid: e.uid, key: k, checked: left > 0, label: `${nameOf(e)}: ลบคีย์ “${k}” (${why})${left ? '' : ' — เป็นคีย์เดียวที่มี ต้องเพิ่มคีย์อื่นก่อน'}` }));
+                if (reason === 'everywhere') {
+                    hub.push(change({ op: 'removeKey', uid: e.uid, key: k, checked: false, label: `${nameOf(e)}: ลบคีย์ “${k}” (อยู่ในเนื้อหาของ ${keyFreq.get(lk)} เอนทรี)` }));
+                    continue;
+                }
+                const why = reason === 'macro' ? 'ชื่อผู้เล่น/ตัวละครหลัก' : 'ชื่อตัวละครหลัก';
+                changes.push(change({ op: 'removeKey', uid: e.uid, key: k, checked: left > 0, label: `${nameOf(e)}: ลบคีย์ “${k}” (${why})` }));
             }
         }
+        if (hub.length) issues.push({
+            id: 'hubkeys', kind: 'keys', short: 'ลบคีย์ที่อยู่ในเนื้อหาของเอนทรีอื่นจำนวนมาก', severity: 'low', title: `คีย์ที่อยู่ในเนื้อหาของเอนทรีอื่นจำนวนมาก ${hub.length} คีย์`,
+            why: 'ชื่อพวกนี้ถูกพูดถึงในเนื้อหาของเอนทรีอื่นเป็นจำนวนมาก พอเปิด recursion อยู่ แค่เอนทรีไหนติด ก็ลากเอนทรีเจ้าของชื่อตามมาเกือบทุกครั้ง',
+            fix: 'ลบคำนั้นออกจากคีย์',
+            tradeoff: 'ไม่ติ๊กไว้ให้ เพราะทางแก้ที่ดีกว่าคือข้อ “ลูกโซ่ recursion” พอซ่อมข้อนั้นแล้ว ข้อนี้จะหายไปเอง ถ้าลบคีย์ที่เป็นชื่อหลักของเอนทรี แชทพูดถึงชื่อนั้นแล้วเอนทรีจะไม่ติด',
+            changes: hub,
+        });
         if (changes.length) issues.push({
-            id: 'everywhere', short: 'ลบคีย์ที่โผล่ทุกข้อความ', severity: 'high', title: `คีย์ที่โผล่แทบทุกข้อความ ${changes.length} คีย์`,
-            why: 'ชื่อตัวละครหลัก {{user}} หรือคำที่อยู่ในเกือบทุกเอนทรี จะอยู่ในแชทแทบทุกเทิร์น (ST ใส่ชื่อคนพูดไว้หน้าทุกข้อความด้วย) เอนทรีที่ใช้คำพวกนี้เป็นคีย์จึงติดตลอดเหมือนเป็น constant',
+            id: 'everywhere', kind: 'keys', short: 'ลบคีย์ที่เป็นชื่อตัวละครหลัก', severity: 'high', title: `คีย์เป็นชื่อตัวละครหลัก ${changes.length} คีย์`,
+            why: 'ST ใส่ชื่อคนพูดไว้หน้าทุกข้อความ ชื่อตัวละครหลักและ {{user}} จึงอยู่ในแชททุกเทิร์น เอนทรีที่ใช้ชื่อพวกนี้เป็นคีย์จะติดตลอดเหมือนเป็น constant',
+            fix: 'ลบชื่อนั้นออกจากคีย์ เอนทรีจะติดด้วยคีย์อื่นที่เหลือแทน',
+            tradeoff: 'ข้อมูลของตัวละครหลักมักอยู่ในการ์ดอยู่แล้ว ถ้าอยากให้เอนทรีนี้อยู่ทุกเทิร์นจริง ๆ ให้เอาติ๊กออก แล้วตั้งเป็น “ติดตลอด” แทน',
             changes,
         });
     }
@@ -543,7 +562,9 @@ export function diagnose(entries, ctx = {}) {
         const taken = new Set((issues.find(i => i.id === 'everywhere')?.changes ?? []).map(c => `${c.uid}|${c.key}`));
         const left = changes.filter(c => !taken.has(`${c.uid}|${c.key}`));
         if (left.length) issues.push({
-            id: 'generic', short: 'ลบคีย์ที่เป็นคำทั่วไป', severity: 'mid', title: `คีย์เป็นคำทั่วไป ${left.length} คีย์`,
+            id: 'generic', kind: 'keys', short: 'ลบคีย์ที่เป็นคำทั่วไป', severity: 'mid',
+            fix: 'ลบคำทั่วไปออกจากคีย์ เหลือชื่อเฉพาะไว้ให้ติด',
+            tradeoff: 'ต้องพูดชื่อเฉพาะถึงจะติด เช่นลบ “Mom” ของ Dana แล้ว ต้องพูดว่า Dana ถึงจะติด คีย์ที่เป็นคีย์เดียวของเอนทรีจะไม่ติ๊กไว้ให้', title: `คีย์เป็นคำทั่วไป ${left.length} คีย์`,
             why: 'คำอย่าง park, coach, library, #11 หรือคำที่ขึ้นต้นตัวเล็ก ใช้กันในประโยคปกติ เอนทรีเลยติดทั้งที่เรื่องไม่ได้พูดถึงสิ่งนั้น ลบคีย์พวกนี้ทิ้ง ยังเหลือชื่อเต็มให้ติดอยู่',
             changes: left,
         });
@@ -583,7 +604,9 @@ export function diagnose(entries, ctx = {}) {
         }
         changes.sort((x, y) => Number(y.checked) - Number(x.checked));
         if (changes.length) issues.push({
-            id: 'clash', short: 'ลบคีย์ที่ชนกับชื่ออื่น', severity: 'mid', title: `คีย์ชนกับชื่อของเอนทรีอื่น ${changes.length} คีย์`,
+            id: 'clash', kind: 'keys', short: 'ลบคีย์ที่ชนกับชื่ออื่น', severity: 'mid',
+            fix: 'ลบคำเดียวที่ไปตรงกับชื่อของเอนทรีอื่นออกจากคีย์',
+            tradeoff: 'ติ๊กไว้ให้เฉพาะนามสกุล ซึ่งในแชทไม่ค่อยเรียกเดี่ยว ๆ ชื่อต้น (เช่น “Malik”) ถ้าลบแล้ว ต้องพิมพ์ชื่อเต็มถึงจะติด ถ้าแชทเรียกชื่อต้นเป็นหลัก อย่าลบ', title: `คีย์ชนกับชื่อของเอนทรีอื่น ${changes.length} คีย์`,
             why: 'คีย์คำเดียวที่เป็นส่วนหนึ่งของชื่ออื่น เช่น “Mercer” ของตัวร้ายไปติดตอนพูดถึง “Eli Mercer” เพื่อนร่วมทีม ติ๊กไว้ให้เฉพาะนามสกุล ส่วนชื่อต้นเลือกเองว่าจะเก็บไหม',
             changes,
         });
@@ -611,9 +634,12 @@ export function diagnose(entries, ctx = {}) {
                 .map(e => ({ e, n: reach(e) })).sort((a, b) => b.n - a.n);
             const top = ranked[0];
             issues.push({
-                id: 'recursion', short: 'ตัดลูกโซ่ recursion', severity: ctx.recursive === false ? 'mid' : 'high',
+                id: 'recursion', kind: 'safe', short: 'ตัดลูกโซ่ recursion',
+                fix: 'เปิด “Prevent further recursion” ให้เอนทรีที่ลากตัวอื่น เนื้อหาของมันจะไม่ถูกเอาไปหาคีย์ต่อ',
+                tradeoff: 'เอนทรีจะติดเฉพาะตอนแชทพูดถึงจริง ไม่ถูกลากมาตามชื่อในเนื้อหาอื่น (แบบเดียวกับ JanitorAI) ข้อนี้ข้อเดียวแก้ระเบิดได้เกือบทั้งหมด ควรซ่อมก่อนข้ออื่น',
+                severity: ctx.recursive === false ? 'mid' : 'high',
                 title: `ลูกโซ่ recursion: ติด 1 เอนทรี ลากตามมาได้ถึง ${top.n} เอนทรี`,
-                why: 'เนื้อหาของเอนทรีมีชื่อของเอนทรีอื่น พอเอนทรีหนึ่งติด ST จะเอาเนื้อหาไปสแกนต่อ แล้วดึงเอนทรีอื่นตามมาเป็นทอด ๆ JanitorAI ไม่มีระบบนี้ บอทที่ทำมาจากที่นั่นจึงไม่ได้เขียนเผื่อ ทางแก้คือเปิด “Prevent further recursion” ให้ทุกเอนทรี' +
+                why: 'เนื้อหาของเอนทรีมีชื่อของเอนทรีอื่น พอเอนทรีหนึ่งติด ST จะเอาเนื้อหาไปสแกนต่อ แล้วดึงเอนทรีอื่นตามมาเป็นทอด ๆ JanitorAI ไม่มีระบบนี้ บอทที่ทำมาจากที่นั่นจึงไม่ได้เขียนเผื่อ' +
                     (ctx.recursive === false ? ' (ตอนนี้ ST ของเราปิด recursion อยู่ แต่คนที่เอาไปใช้ต่ออาจเปิดไว้)' : ''),
                 examples: ranked.slice(0, 3).map(r => `${nameOf(r.e)} → ${links.get(r.e).slice(0, 4).map(nameOf).join(', ')}${links.get(r.e).length > 4 ? ` +${links.get(r.e).length - 4}` : ''} (รวมทอดต่อ ๆ ไป ${r.n})`),
                 changes: [change({ op: 'setAll', field: 'preventRecursion', value: true, uids: [...links.keys()].map(e => e.uid), label: `เปิด Prevent further recursion ให้ ${links.size} เอนทรีที่ลากตัวอื่น` })],
@@ -629,7 +655,9 @@ export function diagnose(entries, ctx = {}) {
             const sorted = [...consts].sort((a, b) => estTokens(a.content) - estTokens(b.content));
             const keepUid = sorted[0]?.uid;
             issues.push({
-                id: 'constant', short: 'เลิกติดตลอด (constant)', severity: 'high', title: `ติดตลอด (constant) ${consts.length} เอนทรี ≈ ${tokens.toLocaleString()} โทเคนทุกเทิร์น`,
+                id: 'constant', kind: 'safe', short: 'เลิกติดตลอด (constant)', severity: 'high',
+                fix: 'เปลี่ยนเป็นติดเมื่อเจอคีย์',
+                tradeoff: 'เรื่องนั้นจะเข้า prompt เฉพาะเทิร์นที่มีคนพูดถึง เก็บตัวที่เล็กที่สุดไว้ให้ 1 ตัว ตัวไหนต้องรู้ทุกเทิร์นจริง ๆ ให้เอาติ๊กออก', title: `ติดตลอด (constant) ${consts.length} เอนทรี ≈ ${tokens.toLocaleString()} โทเคนทุกเทิร์น`,
                 why: 'เอนทรี constant เข้า prompt ทุกเทิร์นโดยไม่ต้องเจอคีย์ ควรเหลือเฉพาะเรื่องที่ต้องรู้ตลอด เช่น ภาพรวมโลก ที่เหลือเปลี่ยนให้ติดเมื่อเจอคีย์',
                 changes: consts.map(e => change({
                     op: 'set', uid: e.uid, field: 'constant', value: false,
@@ -647,7 +675,9 @@ export function diagnose(entries, ctx = {}) {
             return change({ op: 'set', uid: e.uid, field: 'key', value: parts, checked: parts.length > 0, label: parts.length ? `${nameOf(e)}: ใช้ชื่อเอนทรีเป็นคีย์ (${parts.join(', ')})` : `#${e.uid}: ไม่มีทั้งคีย์และชื่อ ต้องใส่เอง` });
         });
         if (changes.length) issues.push({
-            id: 'nokeys', short: 'ใส่คีย์ให้เอนทรีที่ไม่มีคีย์', severity: 'mid', title: `ไม่มีคีย์ ${changes.length} เอนทรี (ไม่มีวันติด)`,
+            id: 'nokeys', kind: 'safe', short: 'ใส่คีย์ให้เอนทรีที่ไม่มีคีย์', severity: 'mid',
+            fix: 'ใช้ชื่อเอนทรีเป็นคีย์',
+            tradeoff: 'ถ้าชื่อเอนทรีไม่ใช่คำที่แชทใช้จริง ให้ไปแก้คีย์เองในหน้าเล่มทีหลัง', title: `ไม่มีคีย์ ${changes.length} เอนทรี (ไม่มีวันติด)`,
             why: 'เอนทรีที่ไม่ได้เป็น constant และไม่มีคีย์ จะไม่ถูกใส่เข้า prompt เลย',
             changes,
         });
@@ -663,7 +693,9 @@ export function diagnose(entries, ctx = {}) {
             if (e._script) notes.push(`${nameOf(e)}: มีสคริปต์ทริกเกอร์ของ JanitorAI ซึ่ง ST ไม่รองรับ ใช้คีย์แทน`);
         }
         if (changes.length || notes.length) issues.push({
-            id: 'foreign', short: 'ลบคำสั่งของเว็บอื่น', severity: 'mid', title: `คำสั่งของเว็บอื่นที่ ST ไม่รู้จัก ${changes.length + notes.length} จุด`,
+            id: 'foreign', kind: 'safe', short: 'ลบคำสั่งของเว็บอื่น', severity: 'mid',
+            fix: 'ลบบรรทัด @@ ของ RisuAI ส่วนคำสั่งอื่นต้องแก้เอง',
+            tradeoff: 'ไม่มีข้อเสีย ST ไม่เข้าใจคำสั่งพวกนี้อยู่แล้ว', title: `คำสั่งของเว็บอื่นที่ ST ไม่รู้จัก ${changes.length + notes.length} จุด`,
             why: 'ST ไม่เข้าใจคำสั่งพวกนี้ จะส่งเข้า prompt ไปเป็นข้อความดิบ ๆ',
             changes, examples: notes.slice(0, 8),
         });
@@ -692,7 +724,9 @@ export function diagnose(entries, ctx = {}) {
     }
 
     for (const i of issues) for (const c of i.changes) c.issue = i.id;
-    issues.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
+    // recommended order: what fixes the explosion without touching keys first, key edits after
+    const ORDER = ['recursion', 'constant', 'dupes', 'messy', 'foreign', 'nokeys', 'everywhere', 'generic', 'clash', 'hubkeys', 'big', 'thai'];
+    issues.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id) || SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
     void byUid;
     return issues;
 }
@@ -717,7 +751,12 @@ export function applyChanges(entries, changes) {
         const e = by.get(c.uid);
         if (!e || removed.has(c.uid)) continue;
         if (c.op === 'set') e[c.field] = structuredClone(c.value);
-        else if (c.op === 'removeKey') e.key = (e.key ?? []).filter(k => k !== c.key);
+        else if (c.op === 'removeKey') {
+            const left = (e.key ?? []).filter(k => k !== c.key);
+            // several fixes together may remove every key of an entry: keep the last one so it can still fire
+            if (!left.length && (e.key ?? []).length && !e.constant) { (out.keptKeys ??= []).push({ uid: e.uid, key: c.key, name: titleParts(e.comment)[0] || `#${e.uid}` }); continue; }
+            e.key = left;
+        }
         else if (c.op === 'stripDecorators') e.content = e.content.split('\n').filter(l => !/^\s*@@/.test(l)).join('\n').trim();
         else if (c.op === 'merge') {
             const target = follow(c.into);
@@ -733,7 +772,31 @@ export function applyChanges(entries, changes) {
             movedTo.set(e.uid, target);
         }
     }
-    return out.filter(e => !removed.has(e.uid));
+    const result = out.filter(e => !removed.has(e.uid));
+    result.keptKeys = out.keptKeys ?? [];
+    return result;
+}
+
+/**
+ * What the ticked changes do to each entry's keys, all fixes together.
+ * @returns {Map<number, {before:string[], after:string[], kept:string|null}>}
+ */
+export function keyPlan(entries, changes) {
+    const by = new Map(entries.map(e => [e.uid, e]));
+    const plan = new Map();
+    const get = uid => {
+        if (!plan.has(uid)) { const e = by.get(uid); plan.set(uid, { before: [...(e?.key ?? [])], after: [...(e?.key ?? [])], kept: null, constant: !!e?.constant }); }
+        return plan.get(uid);
+    };
+    for (const c of changes) if (c.checked && c.op === 'set' && c.field === 'key') get(c.uid).after = [...c.value];
+    for (const c of changes) {
+        if (!c.checked || c.op !== 'removeKey' || !by.has(c.uid)) continue;
+        const p = get(c.uid);
+        const left = p.after.filter(k => k !== c.key);
+        if (!left.length && p.after.length && !p.constant) { p.kept = c.key; continue; }
+        p.after = left;
+    }
+    return plan;
 }
 
 /** Totals for the header line. */

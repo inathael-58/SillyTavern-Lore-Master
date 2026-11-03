@@ -6,7 +6,7 @@ import {
     entryStatus, entriesOf, freeUid, newEntry, keyWarnings, entryWarnings, entryMatches, positionShort, bookStats, SORTS,
     parseJsonLoose, thaiKeyRequest, parseThaiKeys, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
     isGlossary, pickGlossary, condenseRequest, cleanCondensed, LONG_TOKENS,
-    keyScanner, trimToLimits, wouldFire, cardFromPng,
+    keyScanner, trimToLimits, wouldFire, cardFromPng, keyPlan,
 } from '../lib.js';
 
 /** A JanitorAI export entry, with the fields their files carry. */
@@ -439,4 +439,37 @@ test('cardFromPng reads the ccv3 / chara text chunk', () => {
     assert.deepEqual(cardFromPng(png), card);
     assert.equal(detectFormat(cardFromPng(png)), 'card');
     assert.equal(cardFromPng(Buffer.from('nope')), null);
+});
+
+test('hub keys only count contents that still recurse, and are never pre-ticked', () => {
+    const mk = (uid, key, content, extra = {}) => ({ uid, comment: key, key: [key], content, ...extra });
+    const es = [mk(0, 'Kaneki', 'x'), ...[1, 2, 3, 4, 5].map(i => mk(i, `E${i}`, 'Kaneki was here'))];
+    const before = diagnose(es, {}).find(i => i.id === 'hubkeys');
+    assert.ok(before.changes.length && before.changes.every(c => !c.checked));
+    const fixed = es.map(e => ({ ...e, preventRecursion: true }));
+    assert.ok(!diagnose(fixed, {}).some(i => i.id === 'hubkeys'), 'gone once recursion is fixed');
+});
+
+test('several fixes never leave an entry without keys; keyPlan shows what is left', () => {
+    const es = [{ uid: 0, comment: 'Dana', key: ['Mom', 'mother'], content: 'x' }];
+    const changes = [
+        { op: 'removeKey', uid: 0, key: 'Mom', checked: true },
+        { op: 'removeKey', uid: 0, key: 'mother', checked: true },
+    ];
+    const plan = keyPlan(es, changes).get(0);
+    assert.deepEqual(plan.after, ['mother']);
+    assert.equal(plan.kept, 'mother');
+    const out = applyChanges(es, changes);
+    assert.deepEqual(out[0].key, ['mother']);
+    assert.deepEqual(out.keptKeys.map(k => k.key), ['mother']);
+});
+
+test('issues come in the recommended order and say what fixing costs', () => {
+    const issues = diagnose(sampleBooks(), { names: { char: 'Cody Dawson' }, recursive: true, wholeWords: true });
+    const ids = issues.map(i => i.id);
+    assert.ok(ids.indexOf('recursion') < ids.indexOf('generic'));
+    for (const i of issues.filter(x => x.changes.length)) {
+        assert.ok(i.kind === 'safe' || i.kind === 'keys', i.id);
+        assert.ok(i.fix && i.tradeoff, i.id);
+    }
 });

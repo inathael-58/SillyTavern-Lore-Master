@@ -566,3 +566,23 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_settings .lm_verline, #lm_root .lm_status [data-lm-remote] { font-size: 0.9em; opacity: 0.85; }
 #lm_settings .lm_verline { margin: 2px 0 6px; }
 #lm_settings .lm_stale, #lm_root .lm_stale { color: #f5a524; font-weight: 600; }
+
+/* fix guide (0.4.3) */
+#lm_root .lm_guide { border-color: color-mix(in srgb, var(--lm-low) 50%, var(--lm-border)); }
+#lm_root .lm_guide > summary { cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; min-height: 32px; }
+#lm_root .lm_guide > summary::-webkit-details-marker { display: none; }
+#lm_root .lm_guide > summary i { color: var(--lm-low); }
+#lm_root .lm_guide > summary small { color: var(--lm-dim); }
+#lm_root .lm_guide_list { margin: 8px 0; padding-left: 20px; font-size: 14px; }
+#lm_root .lm_guide_list li { margin: 6px 0; }
+#lm_root .lm_kind { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 10px; margin: 6px 0 2px; }
+#lm_root .lm_kind_safe { color: var(--lm-good); background: color-mix(in srgb, var(--lm-good) 14%, transparent); }
+#lm_root .lm_kind_keys { color: var(--lm-mid); background: color-mix(in srgb, var(--lm-mid) 14%, transparent); }
+#lm_root .lm_tradeoff { color: var(--lm-fg); opacity: 0.9; padding: 6px 10px; border-radius: 10px; background: color-mix(in srgb, var(--lm-mid) 8%, transparent); }
+#lm_root .lm_keyleft { display: block; margin-top: 3px; font-size: 12px; color: var(--lm-dim); }
+#lm_root .lm_keyleft span { display: inline-block; padding: 0 6px; margin: 1px 2px 1px 0; border-radius: 6px; background: var(--lm-surface2); }
+#lm_root .lm_keyleft_warn { color: var(--lm-mid); }
+#lm_root .lm_fixbar { display: flex; gap: 8px; align-items: center; }
+#lm_root .lm_fixbar .lm_btn { flex: 1; min-width: 0; padding: 8px 10px; font-size: 14px; white-space: nowrap; }
+#lm_root .lm_fixbar .lm_undo { border: 1px solid var(--lm-border); }
+#lm_root .lm_sticky { backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
