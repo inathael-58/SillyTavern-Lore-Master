@@ -4,7 +4,7 @@
  */
 
 import * as WI from '../../../world-info.js';
-import { entriesOf, bookStats, newEntry, ENTRY_DEFAULTS } from './lib.js';
+import { entriesOf, bookStats, newEntry, ENTRY_DEFAULTS, upsertGlossaryList, glossaryLines } from './lib.js';
 
 const LOG = '[LoreMaster]';
 export const ctx = () => SillyTavern.getContext();
@@ -209,6 +209,22 @@ export async function copyEntriesTo(target, uids, { move = false } = {}) {
     try { WI.reloadEditor?.(target); } catch { /* ignore */ }
     if (move) deleteEntries(uids);
     return n;
+}
+
+/** Rebuild the glossary entry of a book from its Thai keys. Returns the number of names. */
+export async function updateGlossary(name) {
+    const open = cur?.name === name;
+    const data = open ? cur.data : structuredClone(await WI.loadWorldInfo(name));
+    if (!data) throw new Error(`โหลดเล่ม “${name}” ไม่ได้`);
+    const list = upsertGlossaryList(entriesOf(data), template());
+    data.entries = Object.fromEntries(list.map(e => [e.uid, e]));
+    if (open) await touch(true);
+    else {
+        await WI.saveWorldInfo(name, data, true);
+        statCache.set(name, bookStats(data));
+        try { WI.reloadEditor?.(name); } catch { /* ignore */ }
+    }
+    return glossaryLines(list).length;
 }
 
 // ---------------------------------------------------------------- books

@@ -6,6 +6,7 @@
 import * as St from './store.js';
 import { settings, save, DEFAULTS } from './prefs.js';
 import { esc, icon, act, shell, sheet, toast, switchHtml } from './ui.js';
+import { aiSettings, profiles, memoryHubSources, copyFromMemoryHub, ask, lastCall } from './ai.js';
 
 const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric: true });
 
@@ -27,6 +28,15 @@ export function viewSettings() {
 
         <h3 class="lm_h">${icon('fa-sliders')} การสแกน World Info <small>· ค่ารวมของ ST</small></h3>
         <div class="lm_card lm_settings">${haveST ? St.GLOBAL_SETTINGS.map(globalRow).join('') : '<div class="lm_dim">ไม่เจอหน้าตั้งค่า World Info ของ ST</div>'}</div>
+
+        <h3 class="lm_h">${icon('fa-robot')} AI <small>· คิดคีย์ไทย ย่อเนื้อหา</small></h3>
+        <div class="lm_card">${aiBlock()}</div>
+
+        <h3 class="lm_h">${icon('fa-spell-check')} อภิธานชื่อ</h3>
+        <div class="lm_card lm_settings">
+          ${prefRow('glossarySmart', 'โหมดประหยัด', 'แทนที่จะส่งอภิธานทั้งรายการทุกเทิร์น ส่งเฉพาะชื่อที่โผล่ในแชทล่าสุดหรือเป็นของเอนทรีที่ติด ทำงานเฉพาะเครื่องที่ลง Lore Master คนอื่นที่ได้เล่มไปยังได้ทั้งรายการตามปกติ')}
+          <div class="lm_hint">สร้างอภิธานได้จากเมนู ⋯ ของเล่ม หรือในหน้า ตรวจ & รวม</div>
+        </div>
 
         <h3 class="lm_h">${icon('fa-door-open')} ทางเข้า Lore Master</h3>
         <div class="lm_card lm_settings">
@@ -77,11 +87,59 @@ function globalRow(def) {
       <input type="number" class="lm_input lm_num" min="${def.min}" max="${def.max}" value="${v}" data-act="s-global" data-id="${def.id}" inputmode="numeric">${def.unit ? `<span>${def.unit}</span>` : ''}</div></div>`;
 }
 
+let testing = false;
+function aiBlock() {
+    const a = aiSettings();
+    const profs = profiles();
+    const mh = memoryHubSources();
+    const options = sel => [['main', 'API หลักของ ST (ที่เลือกอยู่ตอนนี้)'], ...profs.map(p => [p.id, `Profile: ${p.name}`])]
+        .map(([v, l]) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    return `
+      <div class="lm_dim">เรียงลำดับ API ที่จะใช้ ตัวแรกล่ม ไม่ตอบ หรือตอบมั่ว จะลองตัวถัดไปเอง แนะนำให้ใช้ Connection Profile ของโมเดลฟรีหรือถูก ๆ เป็นตัวแรก</div>
+      <div class="lm_srclist">${a.sources.map((id, i) => `
+        <div class="lm_srcrow">
+          <span class="lm_srcnum">${i + 1}</span>
+          <select class="lm_input" data-act="s-src" data-i="${i}">${options(id)}${id !== 'main' && !profs.some(p => p.id === id) ? `<option value="${esc(id)}" selected>(profile ที่ถูกลบไปแล้ว)</option>` : ''}</select>
+          <button class="lm_icon" data-act="s-srcup" data-i="${i}" ${i ? '' : 'disabled'} aria-label="เลื่อนขึ้น">${icon('fa-arrow-up')}</button>
+          <button class="lm_icon" data-act="s-srcx" data-i="${i}" ${a.sources.length > 1 ? '' : 'disabled'} aria-label="ลบ">${icon('fa-xmark')}</button>
+        </div>`).join('')}</div>
+      ${profs.length ? '' : '<div class="lm_warn">ยังไม่มี Connection Profile (ตั้งได้ในแผง API Connections ของ ST → Connection Profiles) ตอนนี้จะใช้ API หลัก</div>'}
+      <div class="lm_row lm_wrap">
+        <button class="lm_btn" data-act="s-srcadd">${icon('fa-plus')} เพิ่ม API สำรอง</button>
+        ${mh ? `<button class="lm_btn" data-act="s-srcmh">${icon('fa-copy')} ใช้ชุดเดียวกับ Memory Hub</button>` : ''}
+        <button class="lm_btn" data-act="s-aitest" ${testing ? 'disabled' : ''}>${testing ? '<span class="lm_spin lm_spin_sm"></span> กำลังทดสอบ…' : `${icon('fa-plug-circle-check')} ทดสอบ`}</button>
+      </div>
+      ${lastCall ? `<div class="${lastCall.ok ? 'lm_okline' : 'lm_warn'}">${lastCall.ok ? `${icon('fa-circle-check')} ล่าสุด: ${esc(lastCall.label)} ตอบใน ${(lastCall.ms / 1000).toFixed(1)} วินาที` : `${icon('fa-triangle-exclamation')} ${esc(lastCall.error)}`}</div>` : ''}
+      <div class="lm_setrow"><div class="lm_grow"><b>รอคำตอบนานสุด</b><small>เกินนี้ถือว่าไม่ตอบ แล้วลองตัวถัดไป</small></div>
+        <input type="number" class="lm_input lm_num" min="15" max="600" value="${a.timeoutSec}" data-act="s-timeout"> <span>วินาที</span></div>
+      <div class="lm_setrow lm_setcol"><div><b>ย่อเนื้อหาให้เหลือประมาณ</b><small>ค่าเริ่มต้นของปุ่ม ✨ ย่อเนื้อหา</small></div>
+        <div class="lm_seg lm_seg3">${[[0.65, 'สองในสาม'], [0.5, 'ครึ่งหนึ่ง'], [0.35, 'หนึ่งในสาม']].map(([v, l]) => `<button class="lm_segbtn ${Number(settings().condenseRatio) === v ? 'lm_on' : ''}" data-act="s-ratio" data-v="${v}">${l}</button>`).join('')}</div></div>`;
+}
+
 function prefRow(key, label, help) {
     return `<div class="lm_setrow"><div class="lm_grow"><b>${esc(label)}</b>${help ? `<small>${esc(help)}</small>` : ''}</div>${switchHtml(`data-act="s-pref" data-k="${key}"`, !!settings()[key])}</div>`;
 }
 
 act('click', {
+    's-srcup': el => { const a = aiSettings(); const i = Number(el.dataset.i); if (i > 0) { [a.sources[i - 1], a.sources[i]] = [a.sources[i], a.sources[i - 1]]; save(); shell.render(); } },
+    's-srcx': el => { const a = aiSettings(); if (a.sources.length > 1) { a.sources.splice(Number(el.dataset.i), 1); save(); shell.render(); } },
+    's-srcadd': () => {
+        const a = aiSettings();
+        const used = new Set(a.sources);
+        const next = profiles().map(p => p.id).find(id => !used.has(id)) ?? (used.has('main') ? null : 'main');
+        if (!next) { toast.info('ใส่ทุก API ที่มีแล้ว'); return; }
+        a.sources.push(next); save(); shell.render();
+    },
+    's-srcmh': () => { if (copyFromMemoryHub()) { toast.success('ใช้ลำดับ API เดียวกับ Memory Hub แล้ว (แก้แยกได้ภายหลัง)'); shell.render(); } },
+    's-aitest': async () => {
+        testing = true; shell.render();
+        try {
+            await ask({ system: 'Reply with exactly one word: OK', user: 'ping', maxTokens: 50, accept: out => out });
+            toast.success(`${lastCall.label} ตอบใน ${(lastCall.ms / 1000).toFixed(1)} วินาที`, 'เชื่อมต่อได้');
+        } catch (e) { toast.error(String(e?.message ?? e), 'เชื่อมต่อไม่ได้'); }
+        testing = false; shell.render();
+    },
+    's-ratio': el => { settings().condenseRatio = Number(el.dataset.v); save(); shell.render(); },
     's-gx': el => { St.setGlobal(el.dataset.name, false); shell.render(); },
     's-gadd': async () => {
         const g = new Set(St.globalBooks());
@@ -100,6 +158,8 @@ act('click', {
 });
 
 act('change', {
+    's-src': el => { aiSettings().sources[Number(el.dataset.i)] = el.value; save(); shell.render(); },
+    's-timeout': el => { aiSettings().timeoutSec = Math.max(15, Math.min(600, Number(el.value) || 90)); save(); },
     's-pref': el => { settings()[el.dataset.k] = el.checked; save(); shell.refreshEntryPoints?.(); },
     's-global': el => {
         const def = St.GLOBAL_SETTINGS.find(d => d.id === el.dataset.id);

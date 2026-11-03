@@ -4,6 +4,8 @@ import {
     detectFormat, readLorebook, mergeBooks, toWorld, cleanKeys, titleParts, keyMatches, firingKey,
     simulate, diagnose, applyChanges, overCap, estTokens, LOGIC, POSITION,
     entryStatus, entriesOf, freeUid, newEntry, keyWarnings, entryWarnings, entryMatches, positionShort, bookStats, SORTS,
+    parseJsonLoose, thaiKeyRequest, parseThaiKeys, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
+    isGlossary, pickGlossary, condenseRequest, cleanCondensed, LONG_TOKENS,
 } from '../lib.js';
 
 /** A JanitorAI export entry, with the fields their files carry. */
@@ -301,4 +303,82 @@ test('positionShort and sorts', () => {
 test('bookStats', () => {
     const s = bookStats({ entries: { 0: { content: 'abcdefgh', constant: true }, 1: { content: 'abcd', disable: true } } });
     assert.deepEqual(s, { count: 2, on: 1, constant: 1, tokens: 2 });
+});
+
+test('parseJsonLoose copes with fences, think blocks and trailing commas', () => {
+    assert.deepEqual(parseJsonLoose('<think>hmm {x}</think>```json\n{"a":[1,2,],}\n```'), { a: [1, 2] });
+    assert.throws(() => parseJsonLoose('no json here'));
+});
+
+test('thaiKeyRequest lists every entry with its id', () => {
+    const t = thaiKeyRequest([{ uid: 3, comment: 'Weld', key: ['Weld'], content: 'x '.repeat(400) }], { maxContent: 20 });
+    assert.match(t, /^id: 3\ntitle: Weld\nkeywords: Weld\ncontent: /);
+    assert.ok(t.length < 80);
+});
+
+test('parseThaiKeys keeps only new Thai keys, by entry', () => {
+    const es = [{ uid: 1, comment: 'Cody', key: ['Cody', 'โคดี้'] }, { uid: 2, comment: 'Library', key: ['Library'] }];
+    const reply = '{"entries":[{"id":1,"translit":["โคดี้","โคดี","Cody"],"nick":["โค"],"translated":[]},{"id":2,"translit":[],"translated":["ห้องสมุด, ห้องสมุดฮาลเพิร์น"]},{"id":9,"translit":["x"]}]}';
+    const m = parseThaiKeys(reply, es);
+    assert.deepEqual(m.get(1), { translit: ['โคดี'], nick: ['โค'], translated: [] });
+    assert.deepEqual(m.get(2).translated, ['ห้องสมุด', 'ห้องสมุดฮาลเพิร์น']);
+    assert.ok(!m.has(9));
+});
+
+test('vetThaiKey warns when a Thai key sits inside another entry\'s key', () => {
+    const es = [{ uid: 1, comment: 'Marc', key: ['มาร์ค'] }, { uid: 2, comment: 'Marcus Lee', key: ['มาร์คัส'] }];
+    const w = vetThaiKey('มาร์ค', es[0], es, {});
+    assert.ok(w.some(x => x.text.includes('Marcus Lee')));
+    assert.equal(vetThaiKey('มาร์คัส', es[1], es, {}).length, 0);
+    assert.ok(vetThaiKey('ยา', es[0], es, { isThaiDictWord: s => s === 'ยา' }).length);
+});
+
+test('glossary: lines from Thai keys, content round-trip, upsert and removal', () => {
+    const es = [
+        { uid: 0, comment: '[Villains] Weld / Garrick Voss', key: ['Weld', 'เวลด์'], content: 'x' },
+        { uid: 1, comment: 'Cody Dawson — Small Forward', key: ['Cody Dawson', 'โคดี้ ดอว์สัน'], content: 'x' },
+        { uid: 2, comment: 'No Thai', key: ['Nope'], content: 'x' },
+    ];
+    const lines = glossaryLines(es);
+    assert.deepEqual(lines, [{ en: 'Weld', th: 'เวลด์' }, { en: 'Cody Dawson', th: 'โคดี้ ดอว์สัน' }]);
+    assert.deepEqual(parseGlossary(glossaryContent(lines)), lines);
+    const withG = upsertGlossaryList(es);
+    assert.equal(withG.length, 4);
+    const g = withG.find(isGlossary);
+    assert.equal(g.uid, 3);
+    assert.equal(g.constant, true);
+    assert.equal(g.preventRecursion, true);
+    // refresh in place, not a second one
+    withG[0].key.push('เวลด์ดี้');
+    assert.equal(upsertGlossaryList(withG).filter(isGlossary).length, 1);
+    // no Thai keys left → the glossary goes away
+    const none = upsertGlossaryList(withG.map(e => (isGlossary(e) ? e : { ...e, key: ['x'] })));
+    assert.equal(none.filter(isGlossary).length, 0);
+    // the glossary is not checked as a normal entry
+    assert.ok(!diagnose(withG, {}).some(i => i.id === 'nokeys'));
+});
+
+test('pickGlossary keeps names in the chat or of fired entries', () => {
+    const lines = [{ en: 'Cody Dawson', th: 'โคดี้ ดอว์สัน' }, { en: 'Weld', th: 'เวลด์' }, { en: 'Dana', th: 'ดาน่า' }];
+    const picked = pickGlossary(lines, { text: 'Kim: Cody, look out!', activated: [{ comment: 'Weld / Garrick', key: ['Weld'] }] });
+    assert.deepEqual(picked.map(l => l.en), ['Cody Dawson', 'Weld']);
+    assert.deepEqual(pickGlossary(lines, { text: 'ดาน่ายิ้ม' }).map(l => l.en), ['Dana']);
+    assert.deepEqual(pickGlossary([{ en: 'The Rail Crew', th: 'เรลครูว์' }], { text: 'the park' }), [], '"The" alone is not a name');
+});
+
+test('condense: request names the target, cleaning rejects bad rewrites', () => {
+    const orig = `# WELD\n${'Garrick talks a lot about {{user}} and labor. '.repeat(30)}`;
+    assert.match(condenseRequest({ comment: 'Weld', content: orig }, 0.5), /Target length: about \d+ tokens \(50%/);
+    const good = `# WELD\n${'- Garrick Voss: armored thief, labor speeches, hates {{user}}\n'.repeat(6)}`.trim();
+    assert.equal(cleanCondensed(`\`\`\`\n${good}\n\`\`\``, orig), good);
+    assert.equal(cleanCondensed('# WELD\n- Garrick, armored thief', orig), null, 'lost the {{user}} macro');
+    assert.equal(cleanCondensed(orig, orig), null, 'not shorter');
+    assert.equal(cleanCondensed('ok', orig), null, 'a stub');
+});
+
+test('Thai-key issue lists every entry without a Thai key; long entries use LONG_TOKENS', () => {
+    const es = [{ uid: 0, comment: 'A', key: ['Alpha'], content: 'x'.repeat(LONG_TOKENS * 4 + 8) }, { uid: 1, comment: 'B', key: ['บี'], content: 'y' }];
+    const issues = diagnose(es, {});
+    assert.deepEqual(issues.find(i => i.id === 'thai').uids, [0]);
+    assert.deepEqual(issues.find(i => i.id === 'big').uids, [0]);
 });

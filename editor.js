@@ -5,10 +5,14 @@
 
 import {
     entryStatus, entryWarnings, entryMatches, keyWarnings, positionShort, positionInfo, POSITION_INFO, ROLE_INFO,
-    LOGIC_INFO, TRIGGER_INFO, SORTS, estTokens, cleanKeys, firingKey, THAI, entriesOf,
+    LOGIC_INFO, TRIGGER_INFO, SORTS, estTokens, cleanKeys, firingKey, THAI, entriesOf, LONG_TOKENS, isGlossary,
+    THAI_KEY_SYSTEM, thaiKeyRequest, parseThaiKeys, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
 } from './lib.js';
+import { ask } from './ai.js';
+import { backupPut, backupList } from './backup.js';
+import { settings } from './prefs.js';
 import * as St from './store.js';
-import { esc, icon, act, shell, UI, top, push, back, goTab, sheet, confirmBox, promptBox, pickBook, download, toast, fmt, switchHtml } from './ui.js';
+import { esc, icon, act, shell, UI, top, push, back, goTab, sheet, confirmBox, promptBox, previewBox, pickBook, download, toast, fmt, switchHtml } from './ui.js';
 
 let thaiSeg = null;
 try { thaiSeg = new Intl.Segmenter('th', { granularity: 'word' }); } catch { thaiSeg = null; }
@@ -22,7 +26,7 @@ const warnCtx = () => ({ names: names(), isThaiDictWord });
 const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric: true });
 
 /** Hooks the doctor module fills in (avoids a circular import). */
-export const hooks = { checkBook: async () => {}, importFiles: async () => {}, mergeBooks: () => {} };
+export const hooks = { checkBook: async () => {}, importFiles: async () => {}, mergeBooks: () => {}, thaiBook: async () => {}, condenseBook: async () => {} };
 
 const L = { q: '', bookQ: '', filter: 'all', sort: 'book', selecting: false, selected: new Set(), focus: null };
 
@@ -109,6 +113,10 @@ async function bookMenu(name) {
             { value: 'rename', label: 'เปลี่ยนชื่อ', icon: 'fa-i-cursor' },
             { value: 'dup', label: 'ทำสำเนา', icon: 'fa-clone' },
             { value: 'merge', label: 'รวมกับเล่มอื่น…', icon: 'fa-object-group' },
+            '-',
+            { value: 'thai', label: 'ให้ AI คิดคีย์ไทยทั้งเล่ม', icon: 'fa-language', hint: 'ตรวจและเลือกก่อนเพิ่ม' },
+            { value: 'condense', label: 'ให้ AI ย่อเอนทรีที่ยาว', icon: 'fa-compress', hint: 'ตัดคำบรรยายฟุ่มเฟือย เก็บข้อเท็จจริงไว้' },
+            { value: 'gloss', label: 'สร้าง / อัปเดตอภิธานชื่อ', icon: 'fa-spell-check', hint: 'ชื่ออังกฤษ = ตัวสะกดไทย จากคีย์ไทยที่มี' },
             { value: 'export', label: 'ดาวน์โหลด .json', icon: 'fa-download' },
             '-',
             { value: 'delete', label: 'ลบเล่มนี้', icon: 'fa-trash', danger: true },
@@ -132,6 +140,12 @@ async function bookMenu(name) {
         }
         if (v === 'dup') { const nn = await St.duplicateBook(name); toast.success(`สร้าง “${nn}” แล้ว`); }
         if (v === 'merge') return hooks.mergeBooks([name]);
+        if (v === 'thai') return hooks.thaiBook(name);
+        if (v === 'condense') return hooks.condenseBook(name);
+        if (v === 'gloss') {
+            const n = await St.updateGlossary(name);
+            toast.success(n ? `อภิธานชื่อมี ${n} ชื่อ${settings().glossarySmart ? ' · โหมดประหยัดเปิดอยู่: ส่งเฉพาะชื่อที่เกี่ยวในแต่ละเทิร์น' : ''}` : 'ยังไม่มีเอนทรีที่มีคีย์ไทย เลยไม่มีชื่อให้ทำอภิธาน');
+        }
         if (v === 'export') { if (St.cur?.name === name) await St.flush(); download(name, await St.WIref.loadWorldInfo(name)); }
         if (v === 'delete') {
             const used = [...use].map(t => USE_TAGS[t][1]);
@@ -376,6 +390,7 @@ export function viewEntry(v) {
           <div class="lm_label lm_mt">คีย์ <small class="lm_dim">— ${st === 'constant' ? 'ตอนติดตลอดไม่ได้ใช้ เก็บไว้เผื่อเปลี่ยนกลับ' : 'คำที่ทำให้เอนทรีนี้ติด'}</small></div>
           <div class="lm_chipzone" data-zone="key">${chipBox(e, 'key')}</div>
           <div class="lm_hint">พิมพ์แล้วกด Enter หรือใส่ , คั่น · ใส่ทั้งชื่ออังกฤษและไทย เช่น <code>Cody</code> <code>โคดี้</code> · ใช้ regex ได้ เช่น <code>/โค(ดี้|ดี)/</code></div>
+          <div data-zone="thaisug">${thaiSugBox(e)}</div>
           <details class="lm_more" ${(e.keysecondary ?? []).length ? 'open' : ''}>
             <summary>${icon('fa-filter')} เงื่อนไขเพิ่ม (คีย์รอง)${(e.keysecondary ?? []).length ? ` · ${e.keysecondary.length}` : ''}</summary>
             <select class="lm_input" data-f="selectiveLogic" data-type="num">${LOGIC_INFO.map(o => `<option value="${o.value}" ${Number(e.selectiveLogic ?? 0) === o.value ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>
@@ -388,6 +403,7 @@ export function viewEntry(v) {
         <section class="lm_card lm_sec">
           <div class="lm_label lm_row_between"><span>เนื้อหา</span><small class="lm_dim" data-zone="count">${countLine(e)}</small></div>
           <textarea class="lm_input lm_content" data-f="content" rows="8" placeholder="ข้อมูลที่จะส่งให้โมเดลเมื่อเอนทรีนี้ติด ใช้ {{char}} {{user}} ได้">${esc(e.content ?? '')}</textarea>
+          <div class="lm_row lm_wrap" data-zone="condense">${condenseBar(e)}</div>
         </section>
 
         <section class="lm_card lm_sec">
@@ -567,6 +583,116 @@ export function autosize(root) {
     root?.querySelectorAll('textarea.lm_content').forEach(t => { t.style.height = 'auto'; t.style.height = `${Math.min(window.innerHeight * 0.7, t.scrollHeight + 4)}px`; });
 }
 
+// ================================================================ AI helpers in the entry editor
+
+const sug = new Map();       // "book#uid" -> { busy, label, error, rec:{translit,nick,translated}, added:Set }
+const aiBusy = new Map();    // "book#uid" -> what is running ("condense")
+const hasBackup = new Map(); // "book#uid" -> true/false once known
+const ekey = e => `${St.cur?.name}#${e.uid}`;
+
+function thaiSugBox(e) {
+    const s = sug.get(ekey(e));
+    const btn = `<button class="lm_btn lm_ai" data-act="e-thai" ${s?.busy ? 'disabled' : ''}>${s?.busy ? `<span class="lm_spin lm_spin_sm"></span> กำลังถาม ${esc(s.label || 'AI')}…` : `${icon('fa-wand-magic-sparkles')} ให้ AI เสนอคีย์ไทย`}</button>`;
+    if (!s || s.busy) return `<div class="lm_row">${btn}</div>`;
+    if (s.error) return `<div class="lm_row lm_wrap">${btn}</div><div class="lm_warn">${icon('fa-triangle-exclamation')} ${esc(s.error)}</div>`;
+    const all = St.entryList();
+    const wc = warnCtx();
+    const group = (title, list, hint = '') => list.length ? `
+      <div class="lm_suggroup"><div class="lm_sugtitle">${title}${hint ? ` <small>${hint}</small>` : ''}</div>
+        <div class="lm_sugchips">${list.map(k => {
+            const w = vetThaiKey(k, e, all, wc);
+            const added = (e.key ?? []).includes(k);
+            return `<button class="lm_sugchip ${added ? 'lm_added' : ''} ${w.length ? 'lm_sugwarn' : ''}" data-act="e-sugadd" data-k="${esc(k)}" ${added ? 'disabled' : ''} title="${esc(w.map(x => x.text).join('\n'))}">${icon(added ? 'fa-check' : 'fa-plus')} ${esc(k)}${w.length ? ` ${icon('fa-triangle-exclamation')}` : ''}</button>`;
+        }).join('')}</div></div>` : '';
+    const r = s.rec;
+    const warned = [...r.translit, ...r.nick, ...r.translated].map(k => [k, vetThaiKey(k, e, all, wc)]).filter(([, w]) => w.length);
+    const easy = [...r.translit, ...r.nick].filter(k => !(e.key ?? []).includes(k) && !vetThaiKey(k, e, all, wc).length);
+    return `
+    <div class="lm_sugbox">
+      ${group('ทับศัพท์', r.translit)}${group('ชื่อเล่น / คำเรียก', r.nick)}${group('แปล', r.translated, 'เลือกเพิ่มเอง')}
+      ${!r.translit.length && !r.nick.length && !r.translated.length ? '<div class="lm_dim">AI ไม่มีคีย์ใหม่ให้</div>' : ''}
+      ${warned.length ? `<ul class="lm_keywarn">${warned.map(([k, w]) => `<li class="lm_w_warn"><b>${esc(k)}</b> — ${esc(w.map(x => x.text).join(' · '))}</li>`).join('')}</ul>` : ''}
+      <div class="lm_row lm_wrap">
+        ${easy.length ? `<button class="lm_btn lm_primary" data-act="e-sugall">${icon('fa-plus')} เพิ่มทับศัพท์ + ชื่อเล่น (${easy.length})</button>` : ''}
+        ${btn.replace('ให้ AI เสนอคีย์ไทย', 'ถามใหม่')}
+      </div>
+    </div>`;
+}
+
+async function suggestThai(e) {
+    const k = ekey(e);
+    const cur = { busy: true, label: '' };
+    sug.set(k, cur);
+    zone('thaisug', thaiSugBox(e));
+    try {
+        const out = await ask({
+            system: THAI_KEY_SYSTEM, user: thaiKeyRequest([e], { maxContent: 600 }), maxTokens: 800,
+            accept: text => parseThaiKeys(text, [e]),
+            onTry: label => { cur.label = label; if (ekey(curEntry() ?? {}) === k) zone('thaisug', thaiSugBox(e)); },
+        });
+        sug.set(k, { rec: out.get(e.uid) ?? { translit: [], nick: [], translated: [] } });
+    } catch (err) {
+        sug.set(k, { error: `AI ตอบไม่ได้: ${String(err?.message ?? err).split('\n')[0]}` });
+    }
+    if (curEntry()?.uid === e.uid) zone('thaisug', thaiSugBox(e));
+}
+
+function condenseBar(e) {
+    const k = ekey(e);
+    const busy = aiBusy.get(k);
+    const long = estTokens(e.content) > LONG_TOKENS;
+    if (!hasBackup.has(k)) backupList(`entry:${k}`).then(l => { hasBackup.set(k, l.length > 0); if (curEntry()?.uid === e.uid && l.length) zone('condense', condenseBar(e)); }).catch(() => hasBackup.set(k, false));
+    return `
+      <button class="lm_btn lm_ai ${long ? 'lm_ai_hot' : ''}" data-act="e-condense" ${busy || !String(e.content ?? '').trim() ? 'disabled' : ''}>${busy ? `<span class="lm_spin lm_spin_sm"></span> ${esc(busy)}` : `${icon('fa-compress')} ให้ AI ย่อเนื้อหา`}</button>
+      ${hasBackup.get(k) ? `<button class="lm_btn" data-act="e-restore">${icon('fa-clock-rotate-left')} เนื้อหาก่อนย่อ</button>` : ''}
+      ${long && !busy ? `<span class="lm_dim">ยาว ≈${fmt(estTokens(e.content))} โทเคน</span>` : ''}`;
+}
+
+async function condenseEntry(e) {
+    const k = ekey(e);
+    const ratio = Number(settings().condenseRatio) || 0.5;
+    aiBusy.set(k, 'กำลังถาม AI…');
+    zone('condense', condenseBar(e));
+    let text = null;
+    try {
+        text = await ask({
+            system: CONDENSE_SYSTEM, user: condenseRequest(e, ratio), maxTokens: Math.max(600, Math.round(estTokens(e.content) * 1.2)),
+            accept: out => { const t = cleanCondensed(out, e.content); if (!t) throw new Error('ได้เนื้อหาที่ใช้ไม่ได้ (ยาวเท่าเดิม สั้นเกินไป หรือ {{char}}/{{user}} หาย)'); return t; },
+            onTry: label => { aiBusy.set(k, `กำลังถาม ${label}…`); if (curEntry()?.uid === e.uid) zone('condense', condenseBar(e)); },
+        });
+    } catch (err) {
+        toast.error(String(err?.message ?? err).split('\n')[0], 'ย่อไม่สำเร็จ');
+    }
+    aiBusy.delete(k);
+    if (curEntry()?.uid === e.uid) zone('condense', condenseBar(e));
+    if (!text) return;
+    const before = estTokens(e.content), after = estTokens(text);
+    const edited = await previewBox({
+        title: 'เนื้อหาที่ย่อแล้ว',
+        text: `≈${fmt(before)} → <b>≈${fmt(after)}</b> โทเคน (เหลือ ${Math.round(after / Math.max(1, before) * 100)}%) · แก้ต่อในกล่องนี้ได้ เนื้อหาเดิมจะเก็บสำรองไว้ในเบราว์เซอร์`,
+        value: text, ok: 'ใช้เนื้อหานี้',
+    });
+    if (edited === null) return;
+    try { await backupPut(`entry:${k}`, { comment: e.comment, content: e.content }); hasBackup.set(k, true); } catch { /* no IndexedDB */ }
+    e.content = edited;
+    St.touch(true);
+    shell.render();
+    toast.success('ย่อแล้ว');
+}
+
+async function restoreContent(e) {
+    const list = await backupList(`entry:${ekey(e)}`).catch(() => []);
+    if (!list.length) return;
+    const items = list.map((b, i) => ({ value: i, label: new Date(b.at).toLocaleString(), hint: `≈${fmt(estTokens(b.data.content))} โทเคน · ${String(b.data.content).slice(0, 60)}…`, icon: 'fa-clock-rotate-left' }));
+    const i = await sheet({ title: 'กู้เนื้อหาก่อนย่อ', sub: 'เลือกฉบับที่จะใช้แทนเนื้อหาตอนนี้', items });
+    if (i === null) return;
+    await backupPut(`entry:${ekey(e)}`, { comment: e.comment, content: e.content }).catch(() => {});
+    e.content = list[i].data.content;
+    St.touch(true);
+    shell.render();
+    toast.success('กู้เนื้อหาเดิมแล้ว');
+}
+
 // ================================================================ actions
 
 function curEntry() {
@@ -670,6 +796,26 @@ act('click', {
         if (r === 'del') return delEntry();
     },
     'entry-dup': () => dupEntry(),
+    'e-thai': () => { const e = curEntry(); if (e) suggestThai(e); },
+    'e-sugadd': el => {
+        const e = curEntry();
+        if (!e) return;
+        e.key = cleanKeys([...(e.key ?? []), el.dataset.k]);
+        St.touch();
+        zone('key', chipBox(e, 'key')); zone('thaisug', thaiSugBox(e)); zone('live', liveTest(e));
+    },
+    'e-sugall': () => {
+        const e = curEntry();
+        const s = e && sug.get(ekey(e));
+        if (!s?.rec) return;
+        const all = St.entryList();
+        const add = [...s.rec.translit, ...s.rec.nick].filter(k => !vetThaiKey(k, e, all, warnCtx()).length);
+        e.key = cleanKeys([...(e.key ?? []), ...add]);
+        St.touch();
+        zone('key', chipBox(e, 'key')); zone('thaisug', thaiSugBox(e)); zone('live', liveTest(e));
+    },
+    'e-condense': () => { const e = curEntry(); if (e) condenseEntry(e); },
+    'e-restore': () => { const e = curEntry(); if (e) restoreContent(e); },
     'entry-del': () => delEntry(),
     'e-status': el => {
         const e = curEntry();

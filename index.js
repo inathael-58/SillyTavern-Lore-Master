@@ -14,21 +14,23 @@
  *        editor.js · doctor.js · settingsview.js (screens) · prefs.js (settings)
  */
 
-import { detectFormat, FORMAT_LABEL, overCap } from './lib.js';
+import { detectFormat, FORMAT_LABEL, overCap, isGlossary, parseGlossary, pickGlossary, GLOSSARY_HEAD } from './lib.js';
 import * as St from './store.js';
 import { settings, save } from './prefs.js';
 import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast } from './ui.js';
 import { viewLibrary, viewBook, viewEntry, enterBook, hooks, onFieldEvent, onFocusOut, onToggleDetails, focusAfterRender, autosize } from './editor.js';
-import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor } from './doctor.js';
+import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook } from './doctor.js';
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const W = St.WIref;
 
 hooks.checkBook = checkBook;
 hooks.importFiles = importFiles;
 hooks.mergeBooks = startMerge;
+hooks.thaiBook = thaiBook;
+hooks.condenseBook = condenseBook;
 
 // ================================================================ shell
 
@@ -384,15 +386,47 @@ async function onImportChange(ev) {
 
 let lastCut = null;
 function onScanDone(args) {
-    const caps = settings().caps;
-    if (!caps || !Object.keys(caps).length) return;
     const map = args?.activated?.entries;
-    if (!(map instanceof Map) || !map.size) return;
-    const drop = overCap([...map.values()], caps);
-    if (!drop.length) return;
-    for (const e of drop) map.delete(`${e.world}.${e.uid}`);
-    lastCut = { at: Date.now(), n: drop.length, names: drop.map(e => e.comment || `#${e.uid}`) };
-    console.info(LOG, `per-turn cap: dropped ${drop.length} entries`, lastCut.names);
+    if (!(map instanceof Map)) return;
+    const caps = settings().caps;
+    if (caps && Object.keys(caps).length && map.size) {
+        const drop = overCap([...map.values()], caps);
+        if (drop.length) {
+            for (const e of drop) map.delete(`${e.world}.${e.uid}`);
+            lastCut = { at: Date.now(), n: drop.length, names: drop.map(e => e.comment || `#${e.uid}`) };
+            console.info(LOG, `per-turn cap: dropped ${drop.length} entries`, lastCut.names);
+        }
+    }
+    // the last loop of the scan: send only the glossary names that matter this turn
+    if (glossLines.length && !args?.state?.next) {
+        const picked = pickGlossary(glossLines, { text: recentChat(), activated: [...map.values()] });
+        setGlossaryPrompt(picked.length ? `${GLOSSARY_HEAD}\n${picked.map(l => `- ${l.en} = ${l.th}`).join('\n')}` : '');
+    }
+}
+
+// ---------------------------------------------------------------- runtime: glossary "saving mode"
+
+const GLOSS_KEY = 'lore-master-glossary';
+let glossLines = [];
+function setGlossaryPrompt(text) {
+    try { St.ctx().setExtensionPrompt?.(GLOSS_KEY, text, 0 /* IN_PROMPT */, 0, false, 0); } catch (e) { console.warn(LOG, e); }
+}
+function recentChat() {
+    return (St.ctx().chat ?? []).filter(m => !m.is_system && m.mes).slice(-6).map(m => `${m.name}: ${m.mes}`).join('\n');
+}
+/** Before every scan: take glossary entries out of the books (when saving mode is on) and remember their lines. */
+function onEntriesLoaded(lore) {
+    glossLines = [];
+    setGlossaryPrompt('');
+    if (!settings().glossarySmart || !lore) return;
+    for (const arr of [lore.globalLore, lore.characterLore, lore.chatLore, lore.personaLore]) {
+        if (!Array.isArray(arr)) continue;
+        for (let i = arr.length - 1; i >= 0; i--) {
+            if (!isGlossary(arr[i])) continue;
+            if (!arr[i].disable) glossLines.push(...parseGlossary(arr[i].content));
+            arr.splice(i, 1);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- settings drawer + slash command
@@ -457,6 +491,8 @@ function registerCommands() {
     const E = eventTypes ?? {};
     if (E.WORLDINFO_SCAN_DONE) eventSource.on(E.WORLDINFO_SCAN_DONE, onScanDone);
     else console.warn(LOG, 'no WORLDINFO_SCAN_DONE event — the per-turn cap needs a newer SillyTavern');
+    if (E.WORLDINFO_ENTRIES_LOADED) eventSource.on(E.WORLDINFO_ENTRIES_LOADED, onEntriesLoaded);
+    else console.warn(LOG, 'no WORLDINFO_ENTRIES_LOADED event — the glossary saving mode needs a newer SillyTavern');
     if (E.APP_READY) eventSource.on(E.APP_READY, () => { mountSettings(); refreshEntryPoints(); });
     // re-draw when the chat / links change, but never under the user's fingers while they type
     const typing = () => { const a = document.activeElement; return !!a && root?.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); };
@@ -470,6 +506,6 @@ function registerCommands() {
     }
     // keep the extra launchers alive if the theme / UI rebuilds those parts
     setInterval(() => { if (!document.getElementById('lm_wand') && settings().wand) renderWand(); if (!document.getElementById('lm_wi_btn')) renderWiButton(); }, 4000);
-    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), version: VERSION, lastCut: () => lastCut };
+    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), version: VERSION, lastCut: () => lastCut, glossary: () => glossLines };
     console.log(LOG, `v${VERSION} ready`);
 })();

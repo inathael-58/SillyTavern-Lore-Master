@@ -10,6 +10,8 @@
  */
 
 export const THAI = /[฀-๿]/;
+/** An entry longer than this is "long" (warnings, condense suggestions). */
+export const LONG_TOKENS = 500;
 export const LOGIC = { AND_ANY: 0, NOT_ALL: 1, NOT_ANY: 2, AND_ALL: 3 };
 export const POSITION = { before: 0, after: 1, ANTop: 2, ANBottom: 3, atDepth: 4, EMTop: 5, EMBottom: 6, outlet: 7 };
 
@@ -352,7 +354,7 @@ const isWordKey = k => !parseRegexKey(k) && !/\s/.test(String(k).trim());
 export function diagnose(entries, ctx = {}) {
     const names = ctx.names ?? {};
     const opts = { caseSensitive: ctx.caseSensitive ?? false, wholeWords: ctx.wholeWords ?? true, names };
-    const live = entries.filter(e => !e.disable);
+    const live = entries.filter(e => !e.disable && !isGlossary(e));
     const issues = [];
     const byUid = new Map(entries.map(e => [e.uid, e]));
 
@@ -593,20 +595,22 @@ export function diagnose(entries, ctx = {}) {
 
     // 10) long entries (information only)
     {
-        const big = live.filter(e => estTokens(e.content) > 700).sort((a, b) => estTokens(b.content) - estTokens(a.content));
+        const big = live.filter(e => estTokens(e.content) > LONG_TOKENS).sort((a, b) => estTokens(b.content) - estTokens(a.content));
         if (big.length) issues.push({
-            id: 'big', severity: 'low', title: `เอนทรียาวเกิน 700 โทเคน ${big.length} ตัว`,
-            why: 'ติดทีละไม่กี่ตัวก็กินงบหมดแล้ว ตัวอื่นที่สำคัญกว่าอาจถูกตัด ลองแยกเป็นหลายเอนทรีตามหัวข้อ',
+            id: 'big', severity: 'low', title: `เอนทรียาวเกิน ${LONG_TOKENS} โทเคน ${big.length} ตัว`,
+            why: 'ติดทีละไม่กี่ตัวก็กินงบหมดแล้ว ตัวอื่นที่สำคัญกว่าอาจถูกตัด ให้ AI ย่อได้: ตัดคำบรรยายฟุ่มเฟือย เก็บข้อเท็จจริงไว้ครบ ดูก่อนใช้ได้',
+            uids: big.map(e => e.uid),
             examples: big.slice(0, 6).map(e => `${nameOf(e)} ≈ ${estTokens(e.content)}`), changes: [],
         });
     }
 
-    // 11) no Thai keys at all
+    // 11) entries without a Thai key
     {
-        const withThai = live.filter(e => (e.key ?? []).some(k => THAI.test(k))).length;
-        if (live.length && withThai === 0) issues.push({
-            id: 'thai', severity: 'low', title: 'ไม่มีคีย์ภาษาไทยเลย',
-            why: 'ถ้าเล่นเป็นภาษาไทยและโมเดลเขียนชื่อเป็นภาษาไทย (เช่น “โคดี้” แทน “Cody”) คีย์ภาษาอังกฤษจะไม่ติด ตัวช่วยคิดคีย์ไทยจะมาในเวอร์ชันถัดไป',
+        const without = live.filter(e => !e.constant && !(e.key ?? []).some(k => THAI.test(k)));
+        if (without.length) issues.push({
+            id: 'thai', severity: 'low', title: `ไม่มีคีย์ภาษาไทย ${without.length} เอนทรี`,
+            why: 'ถ้าเล่นเป็นภาษาไทยและโมเดลเขียนชื่อเป็นภาษาไทย (เช่น “โคดี้” แทน “Cody”) คีย์ภาษาอังกฤษจะไม่ติด ให้ AI ช่วยคิดคีย์ไทยได้ แล้วเลือกเองว่าจะเพิ่มคีย์ไหน',
+            uids: without.map(e => e.uid),
             changes: [],
         });
     }
@@ -787,7 +791,7 @@ export function keyWarnings(key, { names = {}, isThaiDictWord = null } = {}) {
 export function entryWarnings(e, ctx = {}) {
     const out = [];
     if (!e.disable && !e.constant && !e.vectorized && !(e.key ?? []).length) out.push('ไม่มีคีย์ ไม่มีวันติด');
-    if (estTokens(e.content) > 700) out.push(`ยาว ≈${estTokens(e.content)} โทเคน`);
+    if (estTokens(e.content) > LONG_TOKENS) out.push(`ยาว ≈${estTokens(e.content)} โทเคน`);
     if (!String(e.content ?? '').trim()) out.push('ไม่มีเนื้อหา');
     for (const k of e.key ?? []) for (const w of keyWarnings(k, ctx)) if (w.level !== 'info') out.push(`“${k}”: ${w.text}`);
     return out;
@@ -818,4 +822,169 @@ export function bookStats(world) {
         constant: live.filter(e => e.constant).length,
         tokens: live.reduce((n, e) => n + estTokens(e.content), 0),
     };
+}
+
+// ---------------------------------------------------------------- AI: Thai keys
+
+/** Strip ```json fences / <think> blocks and parse the first JSON object in a model reply. */
+export function parseJsonLoose(text) {
+    let t = String(text ?? '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
+    const a = t.indexOf('{'), b = t.lastIndexOf('}');
+    if (a < 0 || b <= a) throw new Error('คำตอบไม่มี JSON');
+    t = t.slice(a, b + 1);
+    try { return JSON.parse(t); } catch {
+        // common slips: trailing commas, smart quotes
+        return JSON.parse(t.replace(/,\s*([}\]])/g, '$1').replace(/[“”]/g, '"'));
+    }
+}
+
+export const THAI_KEY_SYSTEM = `You localize lorebook keywords for Thai-language roleplay. A lorebook entry is inserted into the prompt when one of its keywords appears in the chat. The chat is written in Thai, so English keywords never match. For each entry, propose Thai keywords that a Thai writer would use for the same person, place, group or thing.
+
+Return ONLY JSON in this shape:
+{"entries":[{"id":0,"translit":["..."],"nick":["..."],"translated":["..."]}]}
+
+- translit: Thai transliterations of the proper names. Put the most common Thai spelling first, then at most 2 other common spellings. For a person give the full name and the given name separately (e.g. "โคดี้ ดอว์สัน", "โคดี้", "โคดี"). For an alias or codename give its transliteration too.
+- nick: Thai nicknames or ways other characters address them that appear in or clearly follow from the content (at most 3). Leave empty if none.
+- translated: Thai translations of descriptive names of places, teams, organizations and items (e.g. "Halpern Library" -> "ห้องสมุดฮาลเพิร์น", "Northpoint Bears" -> "หมีนอร์ธพอยต์"). Leave empty for people.
+- Never output ordinary Thai words of one or two syllables on their own (ยา, หมี, ทีม): Thai has no spaces, so they would match inside other words. Combine them with a name instead.
+- Do not repeat the English keywords. No explanations, no markdown.`;
+
+/** The user message for a batch of entries. */
+export function thaiKeyRequest(entries, { maxContent = 300 } = {}) {
+    return entries.map(e => [
+        `id: ${e.uid}`,
+        `title: ${e.comment || '(none)'}`,
+        `keywords: ${(e.key ?? []).join(', ') || '(none)'}`,
+        `content: ${String(e.content ?? '').replace(/\s+/g, ' ').slice(0, maxContent)}`,
+    ].join('\n')).join('\n\n');
+}
+
+/**
+ * The model's answer → Map uid → { translit, nick, translated } with only Thai keys that the
+ * entry does not already have.
+ */
+export function parseThaiKeys(text, entries) {
+    const json = parseJsonLoose(text);
+    const list = Array.isArray(json) ? json : json.entries;
+    if (!Array.isArray(list)) throw new Error('คำตอบไม่มีรายการ entries');
+    const byUid = new Map(entries.map(e => [Number(e.uid), e]));
+    const out = new Map();
+    for (const r of list) {
+        const e = byUid.get(Number(r?.id));
+        if (!e) continue;
+        const have = new Set((e.key ?? []).map(k => String(k).toLowerCase()));
+        const seen = new Set();
+        const pick = arr => cleanKeys(Array.isArray(arr) ? arr : typeof arr === 'string' ? [arr] : [])
+            .filter(k => THAI.test(k) && !have.has(k.toLowerCase()) && !seen.has(k) && seen.add(k));
+        const rec = { translit: pick(r.translit), nick: pick(r.nick), translated: pick(r.translated) };
+        if (rec.translit.length + rec.nick.length + rec.translated.length) out.set(e.uid, rec);
+    }
+    return out;
+}
+
+/**
+ * Problems with a proposed Thai key. Thai has no spaces, so a key also matches inside any
+ * longer key of another entry ("มาร์ค" fires on "มาร์คัส").
+ */
+export function vetThaiKey(key, entry, entries, ctx = {}) {
+    const out = keyWarnings(key, ctx).filter(w => w.level !== 'info');
+    const k = String(key).toLowerCase();
+    const clash = [];
+    for (const o of entries) {
+        if (o === entry || o.uid === entry.uid || isGlossary(o)) continue;
+        for (const ok of o.key ?? []) {
+            const lo = String(ok).toLowerCase();
+            if (!THAI.test(lo)) continue;
+            if (lo === k || lo.includes(k)) { clash.push(titleParts(o.comment)[0] || `#${o.uid}`); break; }
+        }
+    }
+    if (clash.length) out.push({ level: 'warn', text: `ไปติดตอนพูดถึง ${[...new Set(clash)].slice(0, 3).join(', ')} ด้วย` });
+    return out;
+}
+
+// ---------------------------------------------------------------- glossary of names
+
+export const GLOSSARY_FLAG = 'loremaster_glossary';
+export const GLOSSARY_TITLE = '📖 อภิธานชื่อ (Lore Master)';
+export const GLOSSARY_HEAD = 'ชื่อเฉพาะในเรื่องนี้ เวลาเขียนภาษาไทยให้สะกดตามนี้เสมอ:';
+export function isGlossary(e) { return !!e?.extensions?.[GLOSSARY_FLAG]; }
+
+/** "English name = Thai spelling" for every entry that has a Thai key. */
+export function glossaryLines(entries) {
+    const out = [];
+    const seen = new Set();
+    for (const e of entries) {
+        if (isGlossary(e) || e.disable) continue;
+        const th = (e.key ?? []).find(k => THAI.test(k) && !parseRegexKey(k));
+        if (!th) continue;
+        const title = titleParts(String(e.comment ?? '').replace(/^\[[^\]]*\]\s*/, '')).find(p => /[A-Za-z]/.test(p) && !THAI.test(p));
+        const en = (title || (e.key ?? []).find(k => /[A-Za-z]/.test(k) && !parseRegexKey(k)) || '').trim();
+        if (!en || seen.has(en.toLowerCase())) continue;
+        seen.add(en.toLowerCase());
+        out.push({ en, th });
+    }
+    return out;
+}
+export const glossaryContent = lines => `${GLOSSARY_HEAD}\n${lines.map(l => `- ${l.en} = ${l.th}`).join('\n')}`;
+export function parseGlossary(content) {
+    const out = [];
+    for (const line of String(content ?? '').split('\n')) {
+        if (line.startsWith(GLOSSARY_HEAD)) continue;
+        const m = /^\s*[-•*]?\s*(.+?)\s*=\s*(.+?)\s*$/.exec(line);
+        if (m) out.push({ en: m[1], th: m[2] });
+    }
+    return out;
+}
+/** Fields of the glossary entry (merged into an existing one, or a new one). */
+export function glossaryEntryFields(lines) {
+    return {
+        comment: GLOSSARY_TITLE, content: glossaryContent(lines), key: [], keysecondary: [],
+        constant: true, disable: false, position: POSITION.before, order: 999,
+        preventRecursion: true, excludeRecursion: true, ignoreBudget: false,
+    };
+}
+/** Add or refresh the glossary entry in a list of entries (returns a new list). */
+export function upsertGlossaryList(entries, template = ENTRY_DEFAULTS) {
+    const lines = glossaryLines(entries);
+    const out = structuredClone(entries);
+    const i = out.findIndex(isGlossary);
+    if (!lines.length) return i >= 0 ? out.filter((_, j) => j !== i) : out;
+    if (i >= 0) { Object.assign(out[i], glossaryEntryFields(lines)); return out; }
+    const uid = out.reduce((m, e) => Math.max(m, Number(e.uid) || 0), -1) + 1;
+    out.push({ ...structuredClone(template), uid, displayIndex: out.length, ...glossaryEntryFields(lines), extensions: { [GLOSSARY_FLAG]: true } });
+    return out;
+}
+
+/** Which glossary lines matter this turn: names in the recent chat, or of entries that fired. */
+export function pickGlossary(lines, { text = '', activated = [] } = {}) {
+    const hay = String(text).toLowerCase();
+    const fired = activated.map(e => [e.comment, ...(e.key ?? [])].join('\n').toLowerCase());
+    return lines.filter(l => {
+        const en = l.en.toLowerCase(), th = l.th.toLowerCase();
+        // a given name on its own ("Cody" for "Cody Dawson"), but not "The" of "The Rail Crew"
+        const first = en.split(/\s+/)[0];
+        const useFirst = first.length > 2 && !COMMON_WORDS.has(first) && /^[A-Z]/.test(l.en);
+        return hay.includes(en) || hay.includes(th) || (useFirst && new RegExp(`(?:^|\\W)${escapeRegex(first)}(?:$|\\W)`).test(hay))
+            || fired.some(f => f.includes(en) || f.includes(th));
+    });
+}
+
+// ---------------------------------------------------------------- AI: condense long entries
+
+export const CONDENSE_SYSTEM = `You shorten lorebook entries for roleplay. Rewrite the entry so it is much shorter but keeps every fact the story needs: names, ages, roles, relationships, appearance details, abilities and limits, rules, secrets, history that matters, and how characters treat each other.
+Remove flowery narration, jokes, rhetorical asides, repetition and filler words. Use terse bullet points under short headings (keep the original headings if there are any).
+Keep the original language — do not translate. Keep macros such as {{char}} and {{user}} exactly as written.
+Output only the rewritten entry, nothing else.`;
+export function condenseRequest(entry, ratio = 0.5) {
+    const target = Math.max(40, Math.round(estTokens(entry.content) * ratio));
+    return `Target length: about ${target} tokens (${Math.round(ratio * 100)}% of the original).\nEntry title: ${entry.comment || '(none)'}\n\n<entry>\n${entry.content}\n</entry>`;
+}
+/** Clean the model's rewrite; null if it is unusable. */
+export function cleanCondensed(text, original) {
+    const t = String(text ?? '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^```\w*\n?|```$/gm, '').replace(/<\/?entry>/gi, '').trim();
+    if (!t) return null;
+    // longer than the original, or a tiny stub: not a usable rewrite
+    if (estTokens(t) >= estTokens(original) * 0.95 || estTokens(t) < Math.min(20, estTokens(original) * 0.1)) return null;
+    for (const m of ['{{char}}', '{{user}}']) if (String(original).includes(m) && !t.includes(m)) return null;
+    return t;
 }

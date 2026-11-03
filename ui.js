@@ -99,6 +99,25 @@ export function promptBox({ title, text = '', value = '', ok = 'ตกลง', p
     });
 }
 
+/** Show a long text the user may edit before accepting it. Resolves with the text or null. */
+export function previewBox({ title, text = '', value = '', ok = 'ใช้' }) {
+    return new Promise(resolve => {
+        const el = layer();
+        el.innerHTML = `
+        <div class="lm_scrim" data-x></div>
+        <div class="lm_dialog lm_dialog_wide" role="dialog">
+          <div class="lm_dialog_title">${esc(title)}</div>
+          ${text ? `<div class="lm_dialog_text">${text}</div>` : ''}
+          <textarea class="lm_input lm_preview" rows="12">${esc(value)}</textarea>
+          <div class="lm_dialog_btns"><button class="lm_btn" data-x>ยกเลิก</button><button class="lm_btn lm_primary" data-ok>${esc(ok)}</button></div>
+        </div>`;
+        const ta = el.querySelector('textarea');
+        const close = v => { el.remove(); resolve(v); };
+        el.addEventListener('click', e => { if (e.target.closest('[data-x]')) close(null); else if (e.target.closest('[data-ok]')) close(ta.value.trim() || null); });
+        el.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); close(null); } });
+    });
+}
+
 /** Pick one book. */
 export async function pickBook(names, { title = 'เลือกเล่ม', exclude = [] } = {}) {
     const list = names.filter(n => !exclude.includes(n));

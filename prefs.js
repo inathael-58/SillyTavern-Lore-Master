@@ -16,6 +16,9 @@ export const DEFAULTS = {
     caps: {},
     defaultCap: 10,
     position: 0,                 // where entries from other sites go
+    glossarySmart: true,         // send only the glossary names that matter this turn
+    condenseRatio: 0.5,          // AI condense: target share of the original length
+    ai: { sources: ['main'], timeoutSec: 90 },
 };
 
 export function settings() {
