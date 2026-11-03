@@ -557,3 +557,8 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_srcnum { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--lm-surface2); font-size: 12px; font-weight: 700; }
 #lm_root .lm_srcrow select { flex: 1; min-width: 0; }
 #lm_root .lm_okline { font-size: 13px; color: var(--lm-good); margin: 4px 0; }
+#lm_root .lm_status .lm_statrow { position: relative; padding: 4px 0 4px 26px; font-size: 14px; }
+#lm_root .lm_status .lm_statrow > i { position: absolute; left: 0; top: 8px; width: 18px; text-align: center; }
+#lm_root .lm_status .lm_ok > i { color: var(--lm-good); }
+#lm_root .lm_status .lm_bad { color: var(--lm-high); }
+#lm_root .lm_statbooks { padding-left: 26px; }

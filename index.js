@@ -26,7 +26,7 @@ import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor,
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 const W = St.WIref;
 
 hooks.checkBook = checkBook;
@@ -401,6 +401,13 @@ function onScanDone(args) {
         }
     }
     try { guardAfterLoop(args, map); } catch (e) { console.error(LOG, 'emergency brake failed', e); }
+    // remember what the finished scan put in, for the status card in settings
+    if (!args?.state?.next) {
+        const act = [...map.values()];
+        const books = {};
+        for (const e of act) books[e.world] = (books[e.world] ?? 0) + 1;
+        status.scan = { at: Date.now(), count: act.length, tokens: sumTokens(act), books, loaded: status.loadedCount, braked: !!lastTrip && lastTrip.at >= (status.loadedAt ?? 0) };
+    }
     // the last loop of the scan: send only the glossary names that matter this turn
     if (glossLines.length && !args?.state?.next) {
         const picked = pickGlossary(glossLines, { text: recentChat(), activated: [...map.values()] });
@@ -418,6 +425,7 @@ function onScanDone(args) {
 // Nothing is changed in the books: the entries handed to the scan are copies.
 
 let scanCtx = null;     // { all, scanner, o }
+const status = { loadedAt: 0, loadedCount: 0, scan: null };
 let lastTrip = null;    // shown in the settings screen
 const tripShown = new Set();
 const guardLimits = () => {
@@ -527,6 +535,8 @@ function recentChat() {
 }
 /** Before every scan: glossary saving mode, then the emergency brake. */
 function onEntriesLoaded(lore) {
+    status.loadedAt = Date.now();
+    status.loadedCount = lore ? [lore.globalLore, lore.characterLore, lore.chatLore, lore.personaLore].filter(Array.isArray).reduce((n, a) => n + a.length, 0) : 0;
     glossLines = [];
     setGlossaryPrompt('');
     if (!lore) return;
@@ -621,6 +631,6 @@ function registerCommands() {
     }
     // keep the extra launchers alive if the theme / UI rebuilds those parts
     setInterval(() => { if (!document.getElementById('lm_wand') && settings().wand) renderWand(); if (!document.getElementById('lm_wi_btn')) renderWiButton(); }, 4000);
-    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), version: VERSION, lastCut: () => lastCut, lastTrip: () => lastTrip, glossary: () => glossLines };
+    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), version: VERSION, lastCut: () => lastCut, lastTrip: () => lastTrip, glossary: () => glossLines, status: () => ({ ...status, events: { before: !!E.WORLDINFO_ENTRIES_LOADED, after: !!E.WORLDINFO_SCAN_DONE } }) };
     console.log(LOG, `v${VERSION} ready`);
 })();

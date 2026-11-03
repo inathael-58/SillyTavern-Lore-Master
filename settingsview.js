@@ -29,6 +29,9 @@ export function viewSettings() {
         <h3 class="lm_h">${icon('fa-sliders')} การสแกน World Info <small>· ค่ารวมของ ST</small></h3>
         <div class="lm_card lm_settings">${haveST ? St.GLOBAL_SETTINGS.map(globalRow).join('') : '<div class="lm_dim">ไม่เจอหน้าตั้งค่า World Info ของ ST</div>'}</div>
 
+        <h3 class="lm_h">${icon('fa-heart-pulse')} สถานะ</h3>
+        <div class="lm_card lm_status">${statusBlock()}</div>
+
         <h3 class="lm_h">${icon('fa-hand')} เบรกฉุกเฉิน <small>· กัน lorebook ระเบิดจน ST ค้าง</small></h3>
         <div class="lm_card lm_settings">${guardBlock()}</div>
 
@@ -88,6 +91,34 @@ function globalRow(def) {
     return `<div class="lm_setrow lm_setcol"><div><b>${esc(def.label)}</b><small>${esc(def.help)}</small></div>
       <div class="lm_rangeRow"><input type="range" min="${def.min}" max="${Math.min(def.max, def.id === 'world_info_budget_cap' ? 8192 : def.id === 'world_info_depth' ? 50 : def.max)}" value="${v}" data-act="s-global" data-id="${def.id}">
       <input type="number" class="lm_input lm_num" min="${def.min}" max="${def.max}" value="${v}" data-act="s-global" data-id="${def.id}" inputmode="numeric">${def.unit ? `<span>${def.unit}</span>` : ''}</div></div>`;
+}
+
+/** What Lore Master sees: is it hooked into the scan, what did the last scan put in, how big is the context. */
+function statusBlock() {
+    const lm = globalThis.LoreMaster;
+    const st = lm?.status?.() ?? { events: {} };
+    const c = St.ctx();
+    const f = n => Number(n).toLocaleString();
+    const ok = (v, yes, no) => `<div class="lm_statrow ${v ? 'lm_ok' : 'lm_bad'}">${icon(v ? 'fa-circle-check' : 'fa-circle-xmark')} ${v ? yes : no}</div>`;
+    // context the prompt can use (Chat Completion keeps its own numbers)
+    const cc = c.mainApi === 'openai' ? c.chatCompletionSettings : null;
+    const ctxSize = Number(cc ? cc.openai_max_context : c.maxContext) || 0;
+    const resp = Number(cc ? cc.openai_max_tokens : c.amount_gen ?? 0) || 0;
+    const prompt = Math.max(0, ctxSize - resp);
+    const pct = Number(St.readGlobal(St.GLOBAL_SETTINGS.find(d => d.id === 'world_info_budget'))) || 0;
+    const cap = Number(St.readGlobal(St.GLOBAL_SETTINGS.find(d => d.id === 'world_info_budget_cap'))) || 0;
+    let budget = Math.round(prompt * pct / 100);
+    if (cap > 0) budget = Math.min(budget, cap);
+    const s = st.scan;
+    return `
+      <div class="lm_statrow">${icon('fa-book-atlas')} Lore Master v${esc(lm?.version ?? '?')}</div>
+      ${ok(st.events.before && st.events.after, 'เชื่อมกับการสแกน World Info ของ ST ได้ (เบรกฉุกเฉินและโหมดประหยัดทำงานได้)', `ST รุ่นนี้ไม่มี event ${[!st.events.before && 'WORLDINFO_ENTRIES_LOADED', !st.events.after && 'WORLDINFO_SCAN_DONE'].filter(Boolean).join(', ')} เบรกฉุกเฉินทำงานไม่ได้ ต้องอัปเดต ST`)}
+      ${s ? `<div class="lm_statrow">${icon('fa-magnifying-glass')} สแกนล่าสุด ${new Date(s.at).toLocaleTimeString()}: ติด <b>${f(s.count)}</b> เอนทรี ≈<b>${f(s.tokens)}</b> โทเคน (จาก ${f(s.loaded)} เอนทรีที่โหลด)${s.braked ? ' · <b>เบรกทำงาน</b>' : ''}</div>
+        ${Object.keys(s.books).length ? `<div class="lm_dim lm_statbooks">${Object.entries(s.books).map(([b, n]) => `${esc(b)}: ${n}`).join(' · ')}</div>` : ''}`
+        : `<div class="lm_statrow lm_dim">${icon('fa-hourglass')} ยังไม่เห็นการสแกนตั้งแต่เปิด ST (ส่งข้อความหรือเปิดแชทก่อน)</div>`}
+      ${ctxSize ? `<div class="lm_statrow">${icon('fa-ruler-horizontal')} Context ${f(ctxSize)} − ตอบได้ ${f(resp)} = เหลือให้ prompt <b>${f(prompt)}</b> โทเคน</div>
+        <div class="lm_statrow">${icon('fa-coins')} งบ lorebook ของ ST: ${pct}%${cap ? ` (เพดาน ${f(cap)})` : ''} = <b>${f(budget)}</b> โทเคน${settings().guard ? ` · เบรกของ Lore Master ${f(settings().guardMaxTokens)}` : ''}</div>
+        ${prompt <= 0 ? `<div class="lm_warn">${icon('fa-triangle-exclamation')} ความยาวคำตอบ (Max Response Length) เท่ากับหรือมากกว่า Context จะไม่เหลือที่ให้ prompt เลย จะขึ้น "Mandatory prompts exceed the context size"</div>` : ''}` : ''}`;
 }
 
 function guardBlock() {
