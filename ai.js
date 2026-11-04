@@ -12,20 +12,48 @@ const ctx = () => SillyTavern.getContext();
 export function profiles() {
     try { return ctx().ConnectionManagerRequestService?.getSupportedProfiles?.() ?? []; } catch { return []; }
 }
+/** Tasks that can have their own API list (null = use the main list). */
+export const TASKS = { keys: 'คิดคีย์ไทย', condense: 'ย่อเนื้อหา' };
+
 export function aiSettings() {
     const s = settings();
     s.ai = { sources: ['main'], timeoutSec: 90, ...(s.ai ?? {}) };
     if (!Array.isArray(s.ai.sources) || !s.ai.sources.length) s.ai.sources = ['main'];
+    if (!s.ai.tasks || typeof s.ai.tasks !== 'object') s.ai.tasks = {};
+    for (const t of Object.keys(TASKS)) if (!Array.isArray(s.ai.tasks[t]) || !s.ai.tasks[t].length) s.ai.tasks[t] = null;
     return s.ai;
 }
+/** The list a task uses: its own, or the main one. */
+export function listFor(task) {
+    const a = aiSettings();
+    return (task && a.tasks[task]) || a.sources;
+}
+
+// ---------------------------------------------------------------- requests used today (this device)
+
+const USAGE_KEY = 'loremaster_ai_usage';
+const today = () => new Date().toLocaleDateString('sv'); // YYYY-MM-DD, local time
+function readUsage() {
+    try {
+        const u = JSON.parse(localStorage.getItem(USAGE_KEY) ?? 'null');
+        return u && u.date === today() ? u : { date: today(), counts: {} };
+    } catch { return { date: today(), counts: {} }; }
+}
+function countRequest(src) {
+    const u = readUsage();
+    u.counts[src] = (u.counts[src] ?? 0) + 1;
+    try { localStorage.setItem(USAGE_KEY, JSON.stringify(u)); } catch { /* ignore */ }
+}
+/** Requests sent to this API today from this device (each attempt counts, also failed ones). */
+export const usedToday = src => readUsage().counts[src] ?? 0;
 export function sourceLabel(id) {
     if (id === 'main') return 'API หลักของ ST';
     const p = profiles().find(x => x.id === id);
     return p ? p.name : '(profile ที่ถูกลบไปแล้ว)';
 }
-export function activeSources() {
+export function activeSources(task) {
     const known = new Set(profiles().map(p => p.id));
-    const list = aiSettings().sources.filter(id => id === 'main' || known.has(id));
+    const list = listFor(task).filter(id => id === 'main' || known.has(id));
     return list.length ? list : ['main'];
 }
 /** Memory Hub's list, if it is installed and has one. */
@@ -76,17 +104,18 @@ export let lastCall = null; // { ok, label, error?, ms }
  * Ask the model. `accept(out)` returns the parsed value, or throws if the answer is unusable
  * (then the next API is tried).
  * @template T
- * @param {{system:string, user:string, maxTokens?:number, accept?:(out:string)=>T, signal?:AbortSignal, onTry?:(label:string)=>void}} o
+ * @param {{system:string, user:string, maxTokens?:number, accept?:(out:string)=>T, signal?:AbortSignal, onTry?:(label:string)=>void, task?:string|null}} o
  * @returns {Promise<T>}
  */
-export async function ask({ system, user, maxTokens = 2000, accept = out => out, signal, onTry }) {
+export async function ask({ system, user, maxTokens = 2000, accept = out => out, signal, onTry, task = null }) {
     const a = aiSettings();
     const messages = [{ role: 'system', content: system }, { role: 'user', content: user }];
     const errors = [];
-    for (const src of activeSources()) {
+    for (const src of activeSources(task)) {
         const label = sourceLabel(src);
         onTry?.(label);
         const t0 = Date.now();
+        countRequest(src);
         try {
             const out = await callOne(src, messages, maxTokens, a.timeoutSec * 1000, signal);
             if (!String(out ?? '').trim()) throw new Error('ได้คำตอบว่าง (อาจโดน safety filter หรือโควต้าหมด)');

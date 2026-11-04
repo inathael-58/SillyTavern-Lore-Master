@@ -6,13 +6,14 @@
 import {
     readLorebook, mergeBooks, diagnose, applyChanges, simulate, summarize, toWorld,
     estTokens, FORMAT_LABEL, POSITION, cardFromPng, LONG_TOKENS, THAI, cleanKeys, isGlossary, upsertGlossaryList, glossaryLines,
-    keyPlan, THAI_KEY_SYSTEM, thaiKeyRequest, parseThaiKeys, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
+    keyPlan, NAME_SYSTEM, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, LANG_LABEL, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
 } from './lib.js';
 import * as St from './store.js';
 import { settings, save } from './prefs.js';
 import { esc, icon, act, shell, goTab, goTo, toast, download, fmt } from './ui.js';
 import { isThaiDictWord } from './editor.js';
-import { ask } from './ai.js';
+import { ask, activeSources, sourceLabel } from './ai.js';
+import { nameCache, rememberNames } from './cache.js';
 import { backupPut, backupList } from './backup.js';
 
 const LOG = '[LoreMaster]';
@@ -33,7 +34,8 @@ const S = {
     saved: null, busy: false,
     // AI tools
     job: null,              // { kind, done, total, label, abort: AbortController, errors: [] }
-    thai: null,             // Map uid -> { translit, nick, translated, on:Set }
+    thai: null,             // Map uid -> { langs, origin, english, nick, translated, on:Set, star }
+    thaiPlan: null,         // names to ask, before the user starts
     glossary: true,
     cpick: null,            // Set of uids picked for condensing (picker open when not null)
     cratio: null,
@@ -61,7 +63,7 @@ function rebuild() {
     suggestName();
 }
 function rediagnose() { S.issues = S.work.length ? diagnose(S.work, scanOpts()) : []; }
-function resetAi() { S.thai = null; S.cpick = null; S.condensed = null; S.cexpand.clear(); }
+function resetAi() { S.thai = null; S.thaiPlan = null; S.cpick = null; S.condensed = null; S.cexpand.clear(); }
 function suggestName() {
     const cc = St.currentChar();
     const stBooks = S.sources.filter(s => s.book);
@@ -112,7 +114,7 @@ export async function checkBook(name) {
 }
 export async function thaiBook(name) {
     await checkBook(name);
-    startThai();
+    await prepareThai();
 }
 export async function condenseBook(name) {
     await checkBook(name);
@@ -307,7 +309,7 @@ function viewIssue(i) {
 const live = () => S.work.filter(e => !e.disable && !isGlossary(e));
 const needThai = () => live().filter(e => !e.constant && !(e.key ?? []).some(k => THAI.test(k)));
 const nameOf = e => e.comment || `#${e.uid}`;
-const BATCH = 15;
+const NAME_BATCH = 80; // names per request: names are short, so one request covers a whole small book
 
 function aiTools() {
     const thaiN = needThai().length;
@@ -319,9 +321,9 @@ function aiTools() {
     ${S.job ? jobCard() : ''}
     <section class="lm_card lm_tool">
       <div class="lm_tool_head"><span class="lm_tool_icon">${icon('fa-language')}</span><div class="lm_grow"><b>คีย์ภาษาไทย</b><small>${thaiN ? `${thaiN} เอนทรียังไม่มีคีย์ไทย` : 'ทุกเอนทรีมีคีย์ไทยแล้ว'}</small></div></div>
-      ${S.thai ? thaiReview() : `
-        <p class="lm_why">แชทภาษาไทยจะไม่เจอคีย์ภาษาอังกฤษ ให้ AI เสนอคำทับศัพท์ ชื่อเล่น และคำแปล แล้วเลือกเองว่าจะเพิ่มคีย์ไหน ส่งทีละ ${BATCH} เอนทรี (≈${Math.ceil(thaiN / BATCH)} ครั้ง)</p>
-        <button class="lm_btn lm_primary" data-act="d-thai" ${thaiN && !S.job ? '' : 'disabled'}>${icon('fa-wand-magic-sparkles')} ให้ AI คิดคีย์ไทย (${thaiN} เอนทรี)</button>`}
+      ${S.thai ? thaiReview() : S.thaiPlan ? thaiPlanCard() : `
+        <p class="lm_why">แชทภาษาไทยจะไม่เจอคีย์ภาษาอังกฤษ ส่งเฉพาะ<b>ชื่อเฉพาะ</b>ของแต่ละเอนทรีให้ AI ถอดเสียงตามภาษาต้นทางของชื่อ (เยอรมัน ฝรั่งเศส ญี่ปุ่น…) พร้อมแบบอ่านอังกฤษ และคำแปลของชื่อสถานที่ ชื่อซ้ำถามครั้งเดียว ชื่อที่เคยถามแล้วไม่ถามอีก</p>
+        <button class="lm_btn lm_primary" data-act="d-thai" ${thaiN && !S.job ? '' : 'disabled'}>${icon('fa-wand-magic-sparkles')} ให้ AI คิดคีย์ไทย (${thaiN} เอนทรี)…</button>`}
       <div class="lm_glossrow">
         ${icon('fa-spell-check')} <span class="lm_grow">อภิธานชื่อ: ${hasGloss ? `มีแล้ว ${glossN} ชื่อ` : glossN ? `ทำได้ ${glossN} ชื่อ` : 'ต้องมีคีย์ไทยก่อน'}</span>
         <button class="lm_btn" data-act="d-gloss" ${glossN ? '' : 'disabled'}>${hasGloss ? 'อัปเดต' : 'สร้าง'}</button>
@@ -348,59 +350,115 @@ function jobCard() {
 }
 function jobUpdate() { const el = shell.root?.querySelector('.lm_job'); if (el) el.outerHTML = jobCard(); else shell.render(); }
 
-function startThai() {
-    const list = needThai();
-    if (!list.length || S.job) return;
-    S.thai = new Map();
-    S.job = { kind: 'thai', done: 0, total: list.length, label: '', abort: new AbortController(), errors: [] };
+/** Count names, check what is remembered, and show how many requests it will take before asking. */
+async function prepareThai() {
+    const entries = needThai();
+    if (!entries.length || S.job) return;
+    const { names, byEntry, derived } = collectNames(entries);
+    const cache = await nameCache();
+    const todo = names.filter(n => !cache.has(n.lower));
+    S.thaiPlan = { uids: entries.map(e => e.uid), names, byEntry, derived, todo, cached: names.length - todo.length, calls: Math.ceil(todo.length / NAME_BATCH) };
     S.step = 'fix';
     shell.render();
-    (async () => {
-        const wc = { names: scanOpts().names, isThaiDictWord };
-        for (let i = 0; i < list.length && !S.job.abort.signal.aborted; i += BATCH) {
-            const chunk = list.slice(i, i + BATCH);
-            try {
-                const res = await ask({
-                    system: THAI_KEY_SYSTEM, user: thaiKeyRequest(chunk), maxTokens: 300 * chunk.length + 400, signal: S.job.abort.signal,
-                    accept: text => { const m = parseThaiKeys(text, chunk); if (!m.size) throw new Error('ไม่ได้คีย์ใหม่เลย'); return m; },
-                    onTry: label => { S.job.label = `${label} · ${nameOf(chunk[0])} …`; jobUpdate(); },
-                });
-                for (const [uid, rec] of res) {
-                    const e = S.work.find(x => x.uid === uid);
-                    const on = new Set([...rec.translit, ...rec.nick].filter(k => !vetThaiKey(k, e, S.work, wc).length));
-                    S.thai.set(uid, { ...rec, on });
-                }
-            } catch (err) {
-                if (S.job.abort.signal.aborted) break;
-                S.job.errors.push(String(err?.message ?? err).split('\n')[0]);
-            }
-            S.job.done = Math.min(list.length, i + BATCH);
-            jobUpdate();
+}
+
+function thaiPlanCard() {
+    const p = S.thaiPlan;
+    const apis = activeSources('keys').map(sourceLabel);
+    return `
+      <div class="lm_plan">
+        <div><b>${fmt(p.names.length)}</b> ชื่อเฉพาะ จาก ${fmt(p.uids.length)} เอนทรีที่ยังไม่มีคีย์ไทย</div>
+        ${p.cached ? `<div>${icon('fa-box-archive')} เคยถามแล้ว <b>${fmt(p.cached)}</b> ชื่อ ใช้คำตอบเดิม ไม่ต้องถามใหม่</div>` : ''}
+        <div>${icon('fa-paper-plane')} ต้องถาม <b>${fmt(p.todo.length)}</b> ชื่อ = ประมาณ <b>${p.calls}</b> ครั้ง <small>(ครั้งละ ${NAME_BATCH} ชื่อ อาจเพิ่ม 1–2 ครั้งถ้า AI ตอบตกบางชื่อ)</small></div>
+        <div class="lm_dim">ใช้ API: ${apis.map(esc).join(' → ')} <small>(ตั้งแยกได้ที่ ตั้งค่า → AI → คิดคีย์ไทย)</small></div>
+      </div>
+      ${p.names.length ? '' : '<div class="lm_warn">ไม่เจอชื่อเฉพาะ (คีย์เป็นคำบรรยายทั้งหมด) ลองใช้ปุ่ม ✨ ในหน้าแก้เอนทรีทีละตัวแทน</div>'}
+      <div class="lm_row lm_wrap">
+        <button class="lm_btn lm_primary" data-act="d-thaigo" ${p.names.length ? '' : 'disabled'}>${icon('fa-play')} ${p.todo.length ? `เริ่ม (${p.calls} ครั้ง)` : 'ใช้คำตอบที่จำไว้'}</button>
+        <button class="lm_btn" data-act="d-thaiplanx">ยกเลิก</button>
+      </div>`;
+}
+
+async function startThai() {
+    const p = S.thaiPlan;
+    if (!p || S.job) return;
+    S.thaiPlan = null;
+    const results = new Map(await nameCache());
+    const queue = [];
+    for (let i = 0; i < p.todo.length; i += NAME_BATCH) queue.push({ list: p.todo.slice(i, i + NAME_BATCH), retry: false });
+    S.job = { kind: 'thai', done: 0, total: queue.length, label: '', abort: new AbortController(), errors: [] };
+    shell.render();
+    const retryLater = [];
+    while (queue.length && !S.job.abort.signal.aborted) {
+        const chunk = queue.shift();
+        try {
+            const res = await ask({
+                task: 'keys', system: NAME_SYSTEM, user: nameRequest(chunk.list), maxTokens: 120 * chunk.list.length + 400, signal: S.job.abort.signal,
+                accept: text => { const m = parseNameReply(text, chunk.list); if (!m.size) throw new Error('ไม่ได้ชื่อไหนกลับมาเลย'); return m; },
+                onTry: label => { S.job.label = `${label} · ${chunk.list.length} ชื่อ`; jobUpdate(); },
+            });
+            for (const [k, v] of res) results.set(k, v);
+            await rememberNames(res);
+            // names the model skipped: ask once more, together
+            if (!chunk.retry) retryLater.push(...chunk.list.filter(n => !res.has(n.lower)));
+        } catch (err) {
+            if (S.job.abort.signal.aborted) break;
+            if (chunk.list.length > 10 && !chunk.retry) {
+                // a big batch may be cut off: try the two halves instead
+                const h = Math.ceil(chunk.list.length / 2);
+                queue.unshift({ list: chunk.list.slice(0, h), retry: true }, { list: chunk.list.slice(h), retry: true });
+                S.job.total += 2;
+            } else S.job.errors.push(String(err?.message ?? err).split('\n')[0]);
         }
-        const errs = S.job.errors;
-        S.job = null;
-        if (!S.thai.size) { S.thai = null; toast.error(errs.join('\n') || 'AI ไม่ได้เสนอคีย์ใหม่', 'คิดคีย์ไทยไม่สำเร็จ'); }
-        shell.render();
-    })();
+        S.job.done++;
+        if (!queue.length && retryLater.length) {
+            const again = retryLater.splice(0);
+            for (let i = 0; i < again.length; i += NAME_BATCH) { queue.push({ list: again.slice(i, i + NAME_BATCH), retry: true }); S.job.total++; }
+        }
+        jobUpdate();
+    }
+    const errs = S.job.errors;
+    S.job = null;
+    deriveNames(results, p.derived);
+    await rememberNames(new Map([...p.derived.keys()].filter(k => results.has(k)).map(k => [k, results.get(k)])));
+    // offer per entry
+    const wc = { names: scanOpts().names, isThaiDictWord };
+    S.thai = new Map();
+    for (const uid of p.uids) {
+        const e = S.work.find(x => x.uid === uid);
+        if (!e) continue;
+        const sug = entrySuggestions(e, p.byEntry.get(uid) ?? [], results);
+        if (!sug.origin.length && !sug.english.length && !sug.translated.length) continue;
+        const on = new Set([...sug.origin, ...sug.english].filter(k => !vetThaiKey(k, e, S.work, wc).length));
+        const star = [...sug.origin, ...sug.english].find(k => on.has(k)) ?? null;
+        S.thai.set(uid, { ...sug, on, star });
+    }
+    if (!S.thai.size) { S.thai = null; toast.error(errs.join('\n') || 'AI ไม่ได้เสนอคีย์ใหม่', 'คิดคีย์ไทยไม่สำเร็จ'); }
+    else if (errs.length) toast.warning(`บางชุดไม่สำเร็จ: ${errs.slice(0, 2).join(' · ')}`);
+    shell.render();
 }
 
 function thaiReview() {
     const wc = { names: scanOpts().names, isThaiDictWord };
     const rows = [...S.thai.entries()].map(([uid, r]) => [S.work.find(e => e.uid === uid), r]).filter(([e]) => e);
     const total = rows.reduce((n, [, r]) => n + r.on.size, 0);
-    const chip = (uid, e, k, r) => {
+    const chip = (e, k, r) => {
         const w = vetThaiKey(k, e, S.work, wc);
-        return `<button class="lm_sugchip ${r.on.has(k) ? 'lm_on' : ''} ${w.length ? 'lm_sugwarn' : ''}" data-act="d-sug" data-uid="${uid}" data-k="${esc(k)}" title="${esc(w.map(x => x.text).join('\n'))}">${icon(r.on.has(k) ? 'fa-square-check' : 'fa-square')} ${esc(k)}${w.length ? ` ${icon('fa-triangle-exclamation')}` : ''}</button>`;
+        const star = r.star === k;
+        return `<span class="lm_sugpair"><button class="lm_sugchip ${r.on.has(k) ? 'lm_on' : ''} ${w.length ? 'lm_sugwarn' : ''}" data-act="d-sug" data-uid="${e.uid}" data-k="${esc(k)}" title="${esc(w.map(x => x.text).join('\n'))}">${icon(r.on.has(k) ? 'fa-square-check' : 'fa-square')} ${esc(k)}${w.length ? ` ${icon('fa-triangle-exclamation')}` : ''}</button><button class="lm_star ${star ? 'lm_on' : ''}" data-act="d-star" data-uid="${e.uid}" data-k="${esc(k)}" title="ใช้เป็นตัวสะกดในอภิธาน" aria-label="ใช้ ${esc(k)} เป็นตัวสะกดในอภิธาน">${icon(star ? 'fa-star' : 'fa-star', star ? '' : 'lm_star_off')}</button></span>`;
     };
+    const group = (label, list, e, r) => list.length ? `<div class="lm_suggroup"><span class="lm_sugtag">${label}</span>${list.map(k => chip(e, k, r)).join('')}</div>` : '';
     return `
-      <div class="lm_dim">ติ๊กไว้ให้แล้วเฉพาะคำทับศัพท์และชื่อเล่นที่ไม่มีคำเตือน คำแปล <b>เลือกเพิ่มเอง</b> · ⚠ = อาจไปติดกลางคำอื่นหรือชนกับเอนทรีอื่น (แตะค้างดูเหตุผล)</div>
-      <div class="lm_row lm_mini"><button class="lm_link" data-act="d-sugall" data-v="safe">เลือกตามที่แนะนำ</button><button class="lm_link" data-act="d-sugall" data-v="all">เลือกทั้งหมด</button><button class="lm_link" data-act="d-sugall" data-v="none">ไม่เลือกเลย</button></div>
+      <div class="lm_dim">แตะชิปเพื่อเลือก/ไม่เลือก · แตะ ${icon('fa-star')} เพื่อเลือก<b>ตัวสะกดที่ใช้ในอภิธาน</b> (ตัวนั้นจะเป็นคีย์ไทยตัวแรกของเอนทรี) · ติ๊กไว้ให้แล้วเฉพาะแบบภาษาต้นทางกับแบบอังกฤษที่ไม่มีคำเตือน คำแปล<b>เลือกเพิ่มเอง</b> · ⚠ = อาจไปติดกลางคำอื่นหรือชนกับเอนทรีอื่น</div>
+      <div class="lm_row lm_mini"><button class="lm_link" data-act="d-sugall" data-v="safe">เลือกตามที่แนะนำ</button><button class="lm_link" data-act="d-sugall" data-v="origin">เฉพาะภาษาต้นทาง</button><button class="lm_link" data-act="d-sugall" data-v="all">ทั้งหมด</button><button class="lm_link" data-act="d-sugall" data-v="none">ไม่เลือกเลย</button></div>
       <div class="lm_sugrows">${rows.map(([e, r]) => `
         <div class="lm_sugrow">
           <div class="lm_name">${esc(nameOf(e))}</div>
-          <div class="lm_sugchips">${r.translit.map(k => chip(e.uid, e, k, r)).join('')}${r.nick.map(k => chip(e.uid, e, k, r)).join('')}${r.translated.length ? `<span class="lm_sugsep">แปล:</span>${r.translated.map(k => chip(e.uid, e, k, r)).join('')}` : ''}</div>
+          ${group(r.langs.length ? `ตามภาษาต้นทาง · ${r.langs.map(l => esc(LANG_LABEL[l] ?? l)).join('/')}` : 'ถอดเสียง', r.origin, e, r)}
+          ${group('อ่านแบบอังกฤษ', r.english, e, r)}
+          ${group('แปล', r.translated, e, r)}
         </div>`).join('')}</div>
-      <label class="lm_checkrow"><input type="checkbox" data-act="d-glosson" ${S.glossary ? 'checked' : ''}><span>สร้าง/อัปเดตอภิธานชื่อไปด้วย</span></label>
+      <label class="lm_checkrow"><input type="checkbox" data-act="d-glosson" ${S.glossary ? 'checked' : ''}><span>สร้าง/อัปเดตอภิธานชื่อไปด้วย (ใช้ตัวที่ติด ${icon('fa-star')})</span></label>
       <div class="lm_row lm_wrap">
         <button class="lm_btn lm_primary" data-act="d-thaiapply" ${total ? '' : 'disabled'}>${icon('fa-plus')} เพิ่มคีย์ที่เลือก (${total})</button>
         <button class="lm_btn" data-act="d-thaicancel">ทิ้งทั้งหมด</button>
@@ -438,7 +496,7 @@ function startCondense() {
             if (S.job.abort.signal.aborted) break;
             try {
                 const text = await ask({
-                    system: CONDENSE_SYSTEM, user: condenseRequest(e, ratio), maxTokens: Math.max(600, Math.round(estTokens(e.content) * 1.2)), signal: S.job.abort.signal,
+                    task: 'condense', system: CONDENSE_SYSTEM, user: condenseRequest(e, ratio), maxTokens: Math.max(600, Math.round(estTokens(e.content) * 1.2)), signal: S.job.abort.signal,
                     accept: out => { const t = cleanCondensed(out, e.content); if (!t) throw new Error('ได้เนื้อหาที่ใช้ไม่ได้'); return t; },
                     onTry: label => { S.job.label = `${label} · ${nameOf(e)}`; jobUpdate(); },
                 });
@@ -487,6 +545,7 @@ function applyThai() {
         const r = S.thai.get(e.uid);
         if (!r?.on.size) continue;
         e.key = cleanKeys([...(e.key ?? []), ...r.on]);
+        if (r.star && r.on.has(r.star)) e.key = preferThaiKey(e.key, r.star);
         n += r.on.size;
     }
     if (S.glossary) S.work = upsertGlossaryList(S.work, St.template());
@@ -681,24 +740,36 @@ act('click', {
     'd-rmsrc': el => { S.sources = S.sources.filter(s => s.id !== Number(el.dataset.id)); rebuild(); shell.render(); },
     'd-fixall': () => applyFix(S.issues.map(i => i.id)),
     'd-fixsafe': () => applyFix(S.issues.filter(i => i.kind === 'safe').map(i => i.id)),
-    'd-thai': () => startThai(),
+    'd-thai': () => prepareThai(),
     'd-stop': () => { S.job?.abort.abort(); },
     'd-sug': el => {
         const r = S.thai?.get(Number(el.dataset.uid));
         if (!r) return;
         const k = el.dataset.k;
-        r.on.has(k) ? r.on.delete(k) : r.on.add(k);
+        if (r.on.has(k)) { r.on.delete(k); if (r.star === k) r.star = [...r.on][0] ?? null; } else { r.on.add(k); if (!r.star) r.star = k; }
+        shell.render();
+    },
+    'd-star': el => {
+        const r = S.thai?.get(Number(el.dataset.uid));
+        if (!r) return;
+        r.star = el.dataset.k;
+        r.on.add(el.dataset.k);
         shell.render();
     },
     'd-sugall': el => {
         const wc = { names: scanOpts().names, isThaiDictWord };
         for (const [uid, r] of S.thai ?? []) {
             const e = S.work.find(x => x.uid === uid);
-            const all = [...r.translit, ...r.nick, ...r.translated];
-            r.on = new Set(el.dataset.v === 'all' ? all : el.dataset.v === 'none' ? [] : [...r.translit, ...r.nick].filter(k => !vetThaiKey(k, e, S.work, wc).length));
+            const v = el.dataset.v;
+            const pick = v === 'all' ? [...r.origin, ...r.english, ...r.translated] : v === 'none' ? [] : v === 'origin' ? r.origin
+                : [...r.origin, ...r.english].filter(k => !vetThaiKey(k, e, S.work, wc).length);
+            r.on = new Set(pick);
+            if (!r.on.has(r.star)) r.star = [...r.origin, ...r.english, ...r.translated].find(k => r.on.has(k)) ?? null;
         }
         shell.render();
     },
+    'd-thaigo': () => startThai(),
+    'd-thaiplanx': () => { S.thaiPlan = null; shell.render(); },
     'd-thaiapply': () => applyThai(),
     'd-thaicancel': () => { S.thai = null; shell.render(); },
     'd-gloss': () => {

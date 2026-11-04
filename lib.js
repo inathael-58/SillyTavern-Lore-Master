@@ -977,48 +977,156 @@ export function parseJsonLoose(text) {
     }
 }
 
-export const THAI_KEY_SYSTEM = `You localize lorebook keywords for Thai-language roleplay. A lorebook entry is inserted into the prompt when one of its keywords appears in the chat. The chat is written in Thai, so English keywords never match. For each entry, propose Thai keywords that a Thai writer would use for the same person, place, group or thing.
+export const NAME_SYSTEM = `You turn names from a roleplay lorebook into Thai keywords. A lorebook entry is inserted into the prompt when one of its keywords appears in the chat; the chat is written in Thai, so the Thai spellings matter.
+
+Input: one name per line as "<id>. <name>", optionally followed by "  (in: <entry title>)" and a "context:" line.
 
 Return ONLY JSON in this shape:
-{"entries":[{"id":0,"translit":["..."],"nick":["..."],"translated":["..."]}]}
+{"names":[{"id":0,"lang":"de","translit":["..."],"english":["..."],"translated":["..."],"nick":["..."]}]}
 
-- translit: Thai transliterations of the proper names. Put the most common Thai spelling first, then at most 2 other common spellings. For a person give the full name and the given name separately (e.g. "โคดี้ ดอว์สัน", "โคดี้", "โคดี"). For an alias or codename give its transliteration too.
-- nick: Thai nicknames or ways other characters address them that appear in or clearly follow from the content (at most 3). Leave empty if none.
-- translated: Thai translations of descriptive names of places, teams, organizations and items (e.g. "Halpern Library" -> "ห้องสมุดฮาลเพิร์น", "Northpoint Bears" -> "หมีนอร์ธพอยต์"). Leave empty for people.
-- Never output ordinary Thai words of one or two syllables on their own (ยา, หมี, ทีม): Thai has no spaces, so they would match inside other words. Combine them with a name instead.
-- Do not repeat the English keywords. No explanations, no markdown.`;
+- lang: ISO 639-1 code of the language the name comes from (en, ja, de, fr, it, es, ru, zh, ko, …). Judge from the name itself, not from the language of the text.
+- translit: the Thai transliteration of how the name is pronounced in its origin language, following the Royal Institute of Thailand's rules for that language. If a famous name has a different spelling that is far more common in Thai, put that first. At most 2. Keep one space between the words of a multi-word name, word for word ("Marc Ellis" → "มาร์ก เอลลิส").
+- english: the Thai spelling of the English pronunciation, only when it differs from translit (Michelangelo → translit ["มีเกลันเจโล"], english ["ไมเคิล แองเจโล"]). Otherwise [].
+- translated: for descriptive names of places, organizations, teams, items and titles, the Thai translation ("Halpern Library" → "ห้องสมุดฮาลเพิร์น"). [] for people.
+- nick: only when a context line is given: Thai nicknames or ways others address them that appear in the context. Otherwise [].
+- Never output a lone ordinary Thai word of one or two syllables (ยา, หมี, ทีม); Thai has no spaces, so it would match inside other words.
+- Every id must appear exactly once. No explanations, no markdown.`;
 
-/** The user message for a batch of entries. */
-export function thaiKeyRequest(entries, { maxContent = 300 } = {}) {
-    return entries.map(e => [
-        `id: ${e.uid}`,
-        `title: ${e.comment || '(none)'}`,
-        `keywords: ${(e.key ?? []).join(', ') || '(none)'}`,
-        `content: ${String(e.content ?? '').replace(/\s+/g, ' ').slice(0, maxContent)}`,
-    ].join('\n')).join('\n\n');
+export const LANG_LABEL = { en: 'อังกฤษ', ja: 'ญี่ปุ่น', de: 'เยอรมัน', fr: 'ฝรั่งเศส', it: 'อิตาลี', es: 'สเปน', pt: 'โปรตุเกส', ru: 'รัสเซีย', zh: 'จีน', ko: 'เกาหลี', nl: 'ดัตช์', ar: 'อาหรับ', la: 'ละติน', el: 'กรีก', sv: 'สวีเดน', pl: 'โปแลนด์', th: 'ไทย' };
+
+/**
+ * The proper names of an entry worth turning into Thai: the subject in its title, and
+ * Title-Case keys ("Garrick Voss", "Weld"). Descriptive lower-case keys, numbers, acronyms
+ * and common words are skipped (they are not names, or Thai writers keep them in Latin).
+ */
+export function properNames(entry, { max = 6 } = {}) {
+    const out = [];
+    const seen = new Set();
+    const add = n => {
+        const t = String(n ?? '').trim();
+        const k = t.toLowerCase();
+        if (!t || seen.has(k) || THAI.test(t) || !/[A-Za-z]/.test(t) || parseRegexKey(t)) return;
+        if (/^#?\d+$/.test(t) || /^[A-Z0-9]{2,5}$/.test(t)) return;           // numbers, acronyms
+        const words = t.split(/\s+/);
+        if (!words.every(w => /^[A-Z0-9(]/.test(w) || /^(of|the|de|von|van|da|di|del|la|le|du|and|&|-)$/i.test(w))) return; // not a name
+        if (words.length === 1 && COMMON_WORDS.has(k)) return;
+        seen.add(k);
+        out.push(t);
+    };
+    // the title only counts when it is also a key ("Weld"), or the entry has no Latin key at all:
+    // titles are often topics ("Season Structure") or carry a role ("Head Coach Raymond Hale")
+    const title = titleParts(String(entry.comment ?? '').replace(/^\[[^\]]*\]\s*/, ''))[0] ?? '';
+    const keys = (entry.key ?? []).map(k => String(k).trim());
+    const latinKeys = keys.filter(k => /[A-Za-z]/.test(k) && !THAI.test(k));
+    if (!latinKeys.length || latinKeys.some(k => k.toLowerCase() === title.toLowerCase())) add(title);
+    for (const k of keys) add(k);
+    return out.slice(0, max);
 }
 
 /**
- * The model's answer → Map uid → { translit, nick, translated } with only Thai keys that the
- * entry does not already have.
+ * Unique names across entries (asked once even if three entries share them). A one-word name
+ * that is a word of a longer name of the same entry ("Marc" next to "Marc Ellis") is not asked:
+ * its Thai is taken from the longer name's answer (see deriveNames), which saves a lot of names.
+ * @returns {{ names: {id:number, name:string, lower:string, ctx:string}[], byEntry: Map<number, string[]>, derived: Map<string, {from:string, index:number}> }}
  */
-export function parseThaiKeys(text, entries) {
+export function collectNames(entries) {
+    const per = entries.map(e => ({ e, own: properNames(e) }));
+    const derived = new Map();
+    const standalone = new Set();
+    for (const { own } of per) {
+        const multi = own.filter(n => /\s/.test(n)).map(n => ({ lower: n.toLowerCase(), words: n.toLowerCase().split(/\s+/) }));
+        for (const n of own) {
+            const lower = n.toLowerCase();
+            if (/\s/.test(n)) continue;
+            const parent = multi.find(m => m.words.includes(lower));
+            if (parent) { if (!derived.has(lower)) derived.set(lower, { from: parent.lower, index: parent.words.indexOf(lower) }); }
+            else standalone.add(lower);
+        }
+    }
+    for (const n of standalone) derived.delete(n); // also used on its own somewhere: ask it
+    const names = [];
+    const index = new Map();
+    const byEntry = new Map();
+    for (const { e, own } of per) {
+        byEntry.set(e.uid, own.map(n => n.toLowerCase()));
+        for (const n of own) {
+            const lower = n.toLowerCase();
+            if (index.has(lower) || derived.has(lower)) continue;
+            index.set(lower, names.length);
+            names.push({ id: names.length, name: n, lower, ctx: titleParts(String(e.comment ?? '').replace(/^\[[^\]]*\]\s*/, ''))[0] ?? '' });
+        }
+    }
+    return { names, byEntry, derived };
+}
+
+/** Fill in one-word names from the answer for the longer name they belong to ("มาร์ก เอลลิส" → "มาร์ก"). */
+export function deriveNames(results, derived) {
+    for (const [lower, { from, index }] of derived) {
+        if (results.has(lower)) continue;
+        const p = results.get(from);
+        if (!p) continue;
+        const words = from.split(/\s+/).length;
+        const part = list => list.map(t => t.split(/\s+/)).filter(w => w.length === words).map(w => w[index]).filter(t => THAI.test(t) && [...t].length > 1);
+        const rec = { lang: p.lang, translit: [...new Set(part(p.translit))], english: [...new Set(part(p.english))].filter(t => !part(p.translit).includes(t)), translated: [], nick: [] };
+        if (rec.translit.length || rec.english.length) results.set(lower, rec);
+    }
+    return results;
+}
+
+/** The user message: one name per line, with the entry it comes from; `context` adds a content excerpt. */
+export function nameRequest(list, { context = '' } = {}) {
+    const lines = list.map((n, i) => `${i}. ${n.name}${n.ctx && n.ctx.toLowerCase() !== n.lower ? `  (in: ${n.ctx})` : ''}`);
+    if (context) lines.push(`context: ${String(context).replace(/\s+/g, ' ').slice(0, 700)}`);
+    return lines.join('\n');
+}
+
+/**
+ * The model's answer → Map lower-case name → { lang, translit, english, translated, nick }.
+ * Ids are positions in `list`. Only Thai strings are kept.
+ */
+export function parseNameReply(text, list) {
     const json = parseJsonLoose(text);
-    const list = Array.isArray(json) ? json : json.entries;
-    if (!Array.isArray(list)) throw new Error('คำตอบไม่มีรายการ entries');
-    const byUid = new Map(entries.map(e => [Number(e.uid), e]));
+    const rows = Array.isArray(json) ? json : json.names;
+    if (!Array.isArray(rows)) throw new Error('คำตอบไม่มีรายการ names');
     const out = new Map();
-    for (const r of list) {
-        const e = byUid.get(Number(r?.id));
-        if (!e) continue;
-        const have = new Set((e.key ?? []).map(k => String(k).toLowerCase()));
-        const seen = new Set();
-        const pick = arr => cleanKeys(Array.isArray(arr) ? arr : typeof arr === 'string' ? [arr] : [])
-            .filter(k => THAI.test(k) && !have.has(k.toLowerCase()) && !seen.has(k) && seen.add(k));
-        const rec = { translit: pick(r.translit), nick: pick(r.nick), translated: pick(r.translated) };
-        if (rec.translit.length + rec.nick.length + rec.translated.length) out.set(e.uid, rec);
+    for (const r of rows) {
+        const n = list[Number(r?.id)];
+        if (!n) continue;
+        const pick = arr => cleanKeys(Array.isArray(arr) ? arr : typeof arr === 'string' ? [arr] : []).filter(k => THAI.test(k));
+        const rec = { lang: String(r.lang ?? '').toLowerCase().slice(0, 5), translit: pick(r.translit), english: pick(r.english), translated: pick(r.translated), nick: pick(r.nick) };
+        rec.english = rec.english.filter(k => !rec.translit.includes(k));
+        if (rec.translit.length + rec.english.length + rec.translated.length + rec.nick.length) out.set(n.lower, rec);
     }
     return out;
+}
+
+/**
+ * What to offer for one entry, from the answers for its names: origin-language spellings,
+ * English-style spellings, nicknames, translations — minus keys it already has.
+ */
+export function entrySuggestions(entry, nameLowers, results) {
+    const have = new Set((entry.key ?? []).map(k => String(k).toLowerCase()));
+    const seen = new Set();
+    const take = list => list.filter(k => !have.has(k.toLowerCase()) && !seen.has(k) && seen.add(k));
+    const recs = nameLowers.map(n => results.get(n)).filter(Boolean);
+    const langs = [...new Set(recs.map(r => r.lang).filter(Boolean))];
+    return {
+        langs,
+        origin: take(recs.flatMap(r => r.translit)),
+        english: take(recs.flatMap(r => r.english)),
+        nick: take(recs.flatMap(r => r.nick ?? [])),
+        translated: take(recs.flatMap(r => r.translated)),
+    };
+}
+
+/** Put `key` first among the Thai keys (the glossary uses the first Thai key as the spelling). */
+export function preferThaiKey(keys, key) {
+    const list = cleanKeys([...(keys ?? []), key]);
+    const rest = list.filter(k => k !== key);
+    const firstThai = rest.findIndex(k => THAI.test(k));
+    if (firstThai < 0) return [...rest, key];
+    rest.splice(firstThai, 0, key);
+    return rest;
 }
 
 /**

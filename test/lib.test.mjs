@@ -4,7 +4,7 @@ import {
     detectFormat, readLorebook, mergeBooks, toWorld, cleanKeys, titleParts, keyMatches, firingKey,
     simulate, diagnose, applyChanges, overCap, estTokens, LOGIC, POSITION,
     entryStatus, entriesOf, freeUid, newEntry, keyWarnings, entryWarnings, entryMatches, positionShort, bookStats, SORTS,
-    parseJsonLoose, thaiKeyRequest, parseThaiKeys, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
+    parseJsonLoose, properNames, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
     isGlossary, pickGlossary, condenseRequest, cleanCondensed, LONG_TOKENS,
     keyScanner, trimToLimits, wouldFire, cardFromPng, keyPlan,
 } from '../lib.js';
@@ -311,19 +311,58 @@ test('parseJsonLoose copes with fences, think blocks and trailing commas', () =>
     assert.throws(() => parseJsonLoose('no json here'));
 });
 
-test('thaiKeyRequest lists every entry with its id', () => {
-    const t = thaiKeyRequest([{ uid: 3, comment: 'Weld', key: ['Weld'], content: 'x '.repeat(400) }], { maxContent: 20 });
-    assert.match(t, /^id: 3\ntitle: Weld\nkeywords: Weld\ncontent: /);
-    assert.ok(t.length < 80);
+test('properNames keeps the subject and Title-Case keys, skips descriptions, numbers, acronyms, common words', () => {
+    const e = { comment: '[Villains] Weld / Garrick Voss', key: ['Weld', 'Garrick Voss', 'Garrick', 'industrial armor', '#4', 'EMC', 'Park', 'Spider-Man from Temu', 'Karren von Rosewald', 'เวลด์'] };
+    assert.deepEqual(properNames(e), ['Weld', 'Garrick Voss', 'Garrick', 'Karren von Rosewald']);
 });
 
-test('parseThaiKeys keeps only new Thai keys, by entry', () => {
-    const es = [{ uid: 1, comment: 'Cody', key: ['Cody', 'โคดี้'] }, { uid: 2, comment: 'Library', key: ['Library'] }];
-    const reply = '{"entries":[{"id":1,"translit":["โคดี้","โคดี","Cody"],"nick":["โค"],"translated":[]},{"id":2,"translit":[],"translated":["ห้องสมุด, ห้องสมุดฮาลเพิร์น"]},{"id":9,"translit":["x"]}]}';
-    const m = parseThaiKeys(reply, es);
-    assert.deepEqual(m.get(1), { translit: ['โคดี'], nick: ['โค'], translated: [] });
-    assert.deepEqual(m.get(2).translated, ['ห้องสมุด', 'ห้องสมุดฮาลเพิร์น']);
-    assert.ok(!m.has(9));
+test('collectNames asks each name once, and given names come from the full name', () => {
+    const es = [
+        { uid: 0, comment: 'Marc Ellis — Point Guard', key: ['Marc Ellis', 'Marc'] },
+        { uid: 1, comment: 'Marc Ellis', key: ['Marc Ellis', 'team captain'] },
+        { uid: 2, comment: 'Weld', key: ['Weld'] },
+    ];
+    const { names, byEntry, derived } = collectNames(es);
+    assert.deepEqual(names.map(n => n.name), ['Marc Ellis', 'Weld']);
+    assert.deepEqual(byEntry.get(0), ['marc ellis', 'marc']);
+    assert.deepEqual(derived.get('marc'), { from: 'marc ellis', index: 0 });
+    assert.match(nameRequest(names), /^0\. Marc Ellis\n1\. Weld$/);
+    assert.match(nameRequest(names.slice(0, 1), { context: 'a\n b' }), /context: a b$/);
+    const results = new Map([['marc ellis', { lang: 'en', translit: ['มาร์ก เอลลิส', 'มาร์ค เอลลิส'], english: [], translated: [], nick: [] }]]);
+    deriveNames(results, derived);
+    assert.deepEqual(results.get('marc').translit, ['มาร์ก', 'มาร์ค']);
+});
+
+test('a one-word name used on its own somewhere is still asked', () => {
+    const { names } = collectNames([
+        { uid: 0, comment: 'Marc Ellis', key: ['Marc Ellis', 'Marc'] },
+        { uid: 1, comment: 'Marc', key: ['Marc'] },
+    ]);
+    assert.deepEqual(names.map(n => n.name), ['Marc Ellis', 'Marc']);
+});
+
+test('parseNameReply keeps Thai only, drops English readings equal to the origin one', () => {
+    const list = [{ id: 0, name: 'Michelangelo', lower: 'michelangelo' }, { id: 1, name: 'Halpern Library', lower: 'halpern library' }];
+    const reply = '```json\n{"names":[{"id":0,"lang":"it","translit":["มีเกลันเจโล"],"english":["ไมเคิล แองเจโล","มีเกลันเจโล","Michael"]},{"id":1,"lang":"en","translit":["ฮาลเพิร์น ไลบรารี"],"translated":["ห้องสมุดฮาลเพิร์น"]},{"id":7,"translit":["x"]}]}\n```';
+    const m = parseNameReply(reply, list);
+    assert.deepEqual(m.get('michelangelo'), { lang: 'it', translit: ['มีเกลันเจโล'], english: ['ไมเคิล แองเจโล'], translated: [], nick: [] });
+    assert.deepEqual(m.get('halpern library').translated, ['ห้องสมุดฮาลเพิร์น']);
+    assert.equal(m.size, 2);
+});
+
+test('entrySuggestions groups the answers for an entry and skips keys it has', () => {
+    const results = new Map([
+        ['garrick voss', { lang: 'de', translit: ['การ์ริค ฟอสส์'], english: ['แกร์ริค วอสส์'], translated: [], nick: [] }],
+        ['weld', { lang: 'en', translit: ['เวลด์'], english: [], translated: [], nick: ['ไอ้หุ่นเหล็ก'] }],
+    ]);
+    const s = entrySuggestions({ key: ['Weld', 'เวลด์'] }, ['weld', 'garrick voss', 'missing'], results);
+    assert.deepEqual(s, { langs: ['en', 'de'], origin: ['การ์ริค ฟอสส์'], english: ['แกร์ริค วอสส์'], nick: ['ไอ้หุ่นเหล็ก'], translated: [] });
+});
+
+test('preferThaiKey makes a key the first Thai key, after the English ones', () => {
+    assert.deepEqual(preferThaiKey(['Weld', 'เวลด์', 'เว็ลด์'], 'เว็ลด์'), ['Weld', 'เว็ลด์', 'เวลด์']);
+    assert.deepEqual(preferThaiKey(['Weld'], 'เวลด์'), ['Weld', 'เวลด์']);
+    assert.deepEqual(glossaryLines([{ comment: 'Weld', key: preferThaiKey(['Weld', 'เวลด์', 'เว็ลด์'], 'เว็ลด์') }]), [{ en: 'Weld', th: 'เว็ลด์' }]);
 });
 
 test('vetThaiKey warns when a Thai key sits inside another entry\'s key', () => {

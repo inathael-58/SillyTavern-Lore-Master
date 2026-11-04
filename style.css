@@ -586,3 +586,18 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_fixbar .lm_btn { flex: 1; min-width: 0; padding: 8px 10px; font-size: 14px; white-space: nowrap; }
 #lm_root .lm_fixbar .lm_undo { border: 1px solid var(--lm-border); }
 #lm_root .lm_sticky { backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+
+/* names-only Thai keys, glossary star, per-task APIs (0.5) */
+#lm_root .lm_plan { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, #b07cff 8%, transparent); font-size: 14px; }
+#lm_root .lm_plan i { color: #b07cff; width: 18px; text-align: center; }
+#lm_root .lm_suggroup { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+#lm_root .lm_sugtag { font-size: 11.5px; color: var(--lm-dim); min-width: 100%; }
+#lm_root .lm_sugpair { display: inline-flex; align-items: stretch; }
+#lm_root .lm_sugpair .lm_sugchip { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+#lm_root .lm_star { width: 38px; border: 1px solid var(--lm-border); border-left: 0; border-radius: 0 18px 18px 0; background: var(--lm-surface); cursor: pointer; color: var(--lm-dim); }
+#lm_root .lm_star.lm_on { color: #f5c518; background: color-mix(in srgb, #f5c518 14%, var(--lm-surface)); }
+#lm_root .lm_star .lm_star_off { opacity: 0.35; }
+#lm_root .lm_chipstar { width: 26px; height: 26px; border: 0; border-radius: 50%; background: none; cursor: pointer; color: var(--lm-dim); opacity: 0.4; font-size: 12px; margin-left: -6px; }
+#lm_root .lm_chipstar.lm_on { color: #f5c518; opacity: 1; cursor: default; }
+#lm_root .lm_used { flex: none; font-size: 11.5px; color: var(--lm-dim); white-space: nowrap; }
+#lm_root .lm_srcname { padding: 10px 4px; }

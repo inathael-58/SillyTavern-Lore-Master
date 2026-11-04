@@ -6,7 +6,8 @@
 import * as St from './store.js';
 import { settings, save, DEFAULTS } from './prefs.js';
 import { esc, icon, act, shell, sheet, toast, switchHtml } from './ui.js';
-import { aiSettings, profiles, memoryHubSources, copyFromMemoryHub, ask, lastCall } from './ai.js';
+import { aiSettings, profiles, memoryHubSources, copyFromMemoryHub, ask, lastCall, TASKS, usedToday, sourceLabel } from './ai.js';
+import { nameCache, clearNameCache } from './cache.js';
 
 const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric: true });
 
@@ -138,32 +139,54 @@ function guardBlock() {
 }
 
 let testing = false;
+let aiTab = 'main';     // which list is being edited: main | keys | condense
+let cachedNames = null; // count of remembered names, loaded once
+/** The list being edited, creating a task's own list (a copy of the main one) when needed. */
+function editList() {
+    const a = aiSettings();
+    if (aiTab === 'main') return a.sources;
+    if (!a.tasks[aiTab]) a.tasks[aiTab] = [...a.sources];
+    return a.tasks[aiTab];
+}
 function aiBlock() {
     const a = aiSettings();
     const profs = profiles();
     const mh = memoryHubSources();
+    if (cachedNames === null) nameCache().then(m => { cachedNames = m.size; shell.render(); });
     const options = sel => [['main', 'API หลักของ ST (ที่เลือกอยู่ตอนนี้)'], ...profs.map(p => [p.id, `Profile: ${p.name}`])]
         .map(([v, l]) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    const own = aiTab !== 'main' && !!a.tasks[aiTab];
+    const list = aiTab === 'main' ? a.sources : (a.tasks[aiTab] ?? a.sources);
+    const editable = aiTab === 'main' || own;
+    const tabs = [['main', 'ชุดหลัก'], ...Object.entries(TASKS)].map(([k, l]) => {
+        const custom = k !== 'main' && a.tasks[k];
+        return `<button class="lm_segbtn ${aiTab === k ? 'lm_on' : ''}" data-act="s-aitab" data-v="${k}">${esc(l)}${custom ? ' ●' : ''}</button>`;
+    }).join('');
     return `
-      <div class="lm_dim">เรียงลำดับ API ที่จะใช้ ตัวแรกล่ม ไม่ตอบ หรือตอบมั่ว จะลองตัวถัดไปเอง แนะนำให้ใช้ Connection Profile ของโมเดลฟรีหรือถูก ๆ เป็นตัวแรก</div>
-      <div class="lm_srclist">${a.sources.map((id, i) => `
+      <div class="lm_dim">เรียงลำดับ API ที่จะใช้ ตัวแรกล่ม ไม่ตอบ หรือตอบมั่ว จะลองตัวถัดไปเอง ตั้งแยกตามงานได้ เช่น คิดคีย์ไทยใช้โมเดลเล็ก (flash-lite) ส่วนย่อเนื้อหาใช้โมเดลที่เก่งกว่า (flash)</div>
+      <div class="lm_seg lm_seg3 lm_mt">${tabs}</div>
+      ${aiTab !== 'main' ? `<div class="lm_setrow"><div class="lm_grow"><b>ใช้ชุดหลัก</b><small>${own ? `งาน “${esc(TASKS[aiTab])}” ใช้รายการของตัวเองด้านล่าง` : `งาน “${esc(TASKS[aiTab])}” ใช้ชุดหลัก ปิดเพื่อตั้งแยก`}</small></div>${switchHtml('data-act="s-taskmain"', !own)}</div>` : ''}
+      <div class="lm_srclist">${list.map((id, i) => `
         <div class="lm_srcrow">
           <span class="lm_srcnum">${i + 1}</span>
-          <select class="lm_input" data-act="s-src" data-i="${i}">${options(id)}${id !== 'main' && !profs.some(p => p.id === id) ? `<option value="${esc(id)}" selected>(profile ที่ถูกลบไปแล้ว)</option>` : ''}</select>
-          <button class="lm_icon" data-act="s-srcup" data-i="${i}" ${i ? '' : 'disabled'} aria-label="เลื่อนขึ้น">${icon('fa-arrow-up')}</button>
-          <button class="lm_icon" data-act="s-srcx" data-i="${i}" ${a.sources.length > 1 ? '' : 'disabled'} aria-label="ลบ">${icon('fa-xmark')}</button>
+          ${editable ? `<select class="lm_input" data-act="s-src" data-i="${i}">${options(id)}${id !== 'main' && !profs.some(p => p.id === id) ? `<option value="${esc(id)}" selected>(profile ที่ถูกลบไปแล้ว)</option>` : ''}</select>` : `<span class="lm_grow lm_srcname">${esc(sourceLabel(id))}</span>`}
+          <small class="lm_used" title="ครั้งที่ส่งไปวันนี้จากเครื่องนี้ (นับทุกครั้งที่ลอง รวมที่ล้มเหลว)">วันนี้ ${usedToday(id)}</small>
+          ${editable ? `<button class="lm_icon" data-act="s-srcup" data-i="${i}" ${i ? '' : 'disabled'} aria-label="เลื่อนขึ้น">${icon('fa-arrow-up')}</button>
+          <button class="lm_icon" data-act="s-srcx" data-i="${i}" ${list.length > 1 ? '' : 'disabled'} aria-label="ลบ">${icon('fa-xmark')}</button>` : ''}
         </div>`).join('')}</div>
       ${profs.length ? '' : '<div class="lm_warn">ยังไม่มี Connection Profile (ตั้งได้ในแผง API Connections ของ ST → Connection Profiles) ตอนนี้จะใช้ API หลัก</div>'}
       <div class="lm_row lm_wrap">
-        <button class="lm_btn" data-act="s-srcadd">${icon('fa-plus')} เพิ่ม API สำรอง</button>
-        ${mh ? `<button class="lm_btn" data-act="s-srcmh">${icon('fa-copy')} ใช้ชุดเดียวกับ Memory Hub</button>` : ''}
-        <button class="lm_btn" data-act="s-aitest" ${testing ? 'disabled' : ''}>${testing ? '<span class="lm_spin lm_spin_sm"></span> กำลังทดสอบ…' : `${icon('fa-plug-circle-check')} ทดสอบ`}</button>
+        ${editable ? `<button class="lm_btn" data-act="s-srcadd">${icon('fa-plus')} เพิ่ม API สำรอง</button>` : ''}
+        ${mh && aiTab === 'main' ? `<button class="lm_btn" data-act="s-srcmh">${icon('fa-copy')} ใช้ชุดเดียวกับ Memory Hub</button>` : ''}
+        <button class="lm_btn" data-act="s-aitest" ${testing ? 'disabled' : ''}>${testing ? '<span class="lm_spin lm_spin_sm"></span> กำลังทดสอบ…' : `${icon('fa-plug-circle-check')} ทดสอบ${aiTab === 'main' ? '' : ` (${esc(TASKS[aiTab])})`}`}</button>
       </div>
       ${lastCall ? `<div class="${lastCall.ok ? 'lm_okline' : 'lm_warn'}">${lastCall.ok ? `${icon('fa-circle-check')} ล่าสุด: ${esc(lastCall.label)} ตอบใน ${(lastCall.ms / 1000).toFixed(1)} วินาที` : `${icon('fa-triangle-exclamation')} ${esc(lastCall.error)}`}</div>` : ''}
       <div class="lm_setrow"><div class="lm_grow"><b>รอคำตอบนานสุด</b><small>เกินนี้ถือว่าไม่ตอบ แล้วลองตัวถัดไป</small></div>
         <input type="number" class="lm_input lm_num" min="15" max="600" value="${a.timeoutSec}" data-act="s-timeout"> <span>วินาที</span></div>
       <div class="lm_setrow lm_setcol"><div><b>ย่อเนื้อหาให้เหลือประมาณ</b><small>ค่าเริ่มต้นของปุ่ม ✨ ย่อเนื้อหา</small></div>
-        <div class="lm_seg lm_seg3">${[[0.65, 'สองในสาม'], [0.5, 'ครึ่งหนึ่ง'], [0.35, 'หนึ่งในสาม']].map(([v, l]) => `<button class="lm_segbtn ${Number(settings().condenseRatio) === v ? 'lm_on' : ''}" data-act="s-ratio" data-v="${v}">${l}</button>`).join('')}</div></div>`;
+        <div class="lm_seg lm_seg3">${[[0.65, 'สองในสาม'], [0.5, 'ครึ่งหนึ่ง'], [0.35, 'หนึ่งในสาม']].map(([v, l]) => `<button class="lm_segbtn ${Number(settings().condenseRatio) === v ? 'lm_on' : ''}" data-act="s-ratio" data-v="${v}">${l}</button>`).join('')}</div></div>
+      <div class="lm_setrow"><div class="lm_grow"><b>ชื่อที่จำคำตอบไว้</b><small>${cachedNames === null ? '…' : `${cachedNames.toLocaleString()} ชื่อ`} · ชื่อพวกนี้ไม่ต้องถาม AI ซ้ำ (เก็บในเบราว์เซอร์นี้) ล้างถ้าอยากให้ถามใหม่ทั้งหมด</small></div>
+        <button class="lm_btn" data-act="s-namesclear" ${cachedNames ? '' : 'disabled'}>${icon('fa-eraser')} ล้าง</button></div>`;
 }
 
 function prefRow(key, label, help) {
@@ -171,20 +194,22 @@ function prefRow(key, label, help) {
 }
 
 act('click', {
-    's-srcup': el => { const a = aiSettings(); const i = Number(el.dataset.i); if (i > 0) { [a.sources[i - 1], a.sources[i]] = [a.sources[i], a.sources[i - 1]]; save(); shell.render(); } },
-    's-srcx': el => { const a = aiSettings(); if (a.sources.length > 1) { a.sources.splice(Number(el.dataset.i), 1); save(); shell.render(); } },
+    's-aitab': el => { aiTab = el.dataset.v; shell.render(); },
+    's-srcup': el => { const l = editList(); const i = Number(el.dataset.i); if (i > 0) { [l[i - 1], l[i]] = [l[i], l[i - 1]]; save(); shell.render(); } },
+    's-srcx': el => { const l = editList(); if (l.length > 1) { l.splice(Number(el.dataset.i), 1); save(); shell.render(); } },
     's-srcadd': () => {
-        const a = aiSettings();
-        const used = new Set(a.sources);
+        const l = editList();
+        const used = new Set(l);
         const next = profiles().map(p => p.id).find(id => !used.has(id)) ?? (used.has('main') ? null : 'main');
         if (!next) { toast.info('ใส่ทุก API ที่มีแล้ว'); return; }
-        a.sources.push(next); save(); shell.render();
+        l.push(next); save(); shell.render();
     },
+    's-namesclear': async () => { await clearNameCache(); cachedNames = 0; toast.success('ล้างชื่อที่จำไว้แล้ว'); shell.render(); },
     's-srcmh': () => { if (copyFromMemoryHub()) { toast.success('ใช้ลำดับ API เดียวกับ Memory Hub แล้ว (แก้แยกได้ภายหลัง)'); shell.render(); } },
     's-aitest': async () => {
         testing = true; shell.render();
         try {
-            await ask({ system: 'Reply with exactly one word: OK', user: 'ping', maxTokens: 50, accept: out => out });
+            await ask({ task: aiTab === 'main' ? null : aiTab, system: 'Reply with exactly one word: OK', user: 'ping', maxTokens: 50, accept: out => out });
             toast.success(`${lastCall.label} ตอบใน ${(lastCall.ms / 1000).toFixed(1)} วินาที`, 'เชื่อมต่อได้');
         } catch (e) { toast.error(String(e?.message ?? e), 'เชื่อมต่อไม่ได้'); }
         testing = false; shell.render();
@@ -217,7 +242,12 @@ act('click', {
 });
 
 act('change', {
-    's-src': el => { aiSettings().sources[Number(el.dataset.i)] = el.value; save(); shell.render(); },
+    's-src': el => { editList()[Number(el.dataset.i)] = el.value; save(); shell.render(); },
+    's-taskmain': el => {
+        const a = aiSettings();
+        a.tasks[aiTab] = el.checked ? null : [...a.sources];
+        save(); shell.render();
+    },
     's-gnum': el => { const k = el.dataset.k; settings()[k] = Math.max(k === 'guardMaxEntries' ? 5 : 2000, Number(el.value) || 0); save(); },
     's-timeout': el => { aiSettings().timeoutSec = Math.max(15, Math.min(600, Number(el.value) || 90)); save(); },
     's-pref': el => { settings()[el.dataset.k] = el.checked; save(); shell.refreshEntryPoints?.(); },

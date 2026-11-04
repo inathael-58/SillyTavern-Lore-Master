@@ -6,9 +6,10 @@
 import {
     entryStatus, entryWarnings, entryMatches, keyWarnings, positionShort, positionInfo, POSITION_INFO, ROLE_INFO,
     LOGIC_INFO, TRIGGER_INFO, SORTS, estTokens, cleanKeys, firingKey, THAI, entriesOf, LONG_TOKENS, isGlossary,
-    THAI_KEY_SYSTEM, thaiKeyRequest, parseThaiKeys, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
+    NAME_SYSTEM, properNames, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, LANG_LABEL, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
 } from './lib.js';
 import { ask } from './ai.js';
+import { nameCache, rememberNames } from './cache.js';
 import { backupPut, backupList } from './backup.js';
 import { settings } from './prefs.js';
 import * as St from './store.js';
@@ -514,7 +515,10 @@ function chipBox(e, field) {
         const w = field === 'key' ? keyWarnings(k, wc) : [];
         const lvl = w.some(x => x.level === 'bad') ? 'bad' : w.some(x => x.level === 'warn') ? 'warn' : w.length ? 'info' : '';
         for (const x of w) warns.push(`<li class="lm_w_${x.level}"><b>${esc(k)}</b> — ${esc(x.text)}</li>`);
-        return `<span class="lm_chip ${lvl ? `lm_chip_${lvl}` : ''} ${THAI.test(k) ? 'lm_chip_th' : ''}">${esc(k)}<button data-act="chip-x" data-field="${field}" data-i="${i}" aria-label="ลบคีย์ ${esc(k)}">${icon('fa-xmark')}</button></span>`;
+        const isThai = field === 'key' && THAI.test(k);
+        const first = isThai && keys.find(x => THAI.test(x)) === k;
+        const star = isThai ? `<button class="lm_chipstar ${first ? 'lm_on' : ''}" data-act="chip-star" data-i="${i}" title="${first ? 'ตัวสะกดที่ใช้ในอภิธาน' : 'ใช้เป็นตัวสะกดในอภิธาน'}" aria-label="ใช้ ${esc(k)} เป็นตัวสะกดในอภิธาน" ${first ? 'disabled' : ''}>${icon('fa-star')}</button>` : '';
+        return `<span class="lm_chip ${lvl ? `lm_chip_${lvl}` : ''} ${isThai ? 'lm_chip_th' : THAI.test(k) ? 'lm_chip_th' : ''}">${star}${esc(k)}<button data-act="chip-x" data-field="${field}" data-i="${i}" aria-label="ลบคีย์ ${esc(k)}">${icon('fa-xmark')}</button></span>`;
     }).join('');
     return `<div class="lm_chipbox" data-field="${field}">${chips}<input class="lm_chipin" data-act="chip-in" data-field="${field}" placeholder="${keys.length ? 'เพิ่ม…' : field === 'key' ? 'พิมพ์คีย์…' : 'พิมพ์คีย์รอง…'}" enterkeyhint="enter" autocapitalize="off" autocomplete="off"></div>
       ${warns.length ? `<ul class="lm_keywarn">${warns.join('')}</ul>` : ''}`;
@@ -587,7 +591,7 @@ export function autosize(root) {
 
 // ================================================================ AI helpers in the entry editor
 
-const sug = new Map();       // "book#uid" -> { busy, label, error, rec:{translit,nick,translated}, added:Set }
+const sug = new Map();       // "book#uid" -> { busy, label, error, rec: entrySuggestions(), fromCache }
 const aiBusy = new Map();    // "book#uid" -> what is running ("condense")
 const hasBackup = new Map(); // "book#uid" -> true/false once known
 const ekey = e => `${St.cur?.name}#${e.uid}`;
@@ -599,6 +603,7 @@ function thaiSugBox(e) {
     if (s.error) return `<div class="lm_row lm_wrap">${btn}</div><div class="lm_warn">${icon('fa-triangle-exclamation')} ${esc(s.error)}</div>`;
     const all = St.entryList();
     const wc = warnCtx();
+    const r = s.rec;
     const group = (title, list, hint = '') => list.length ? `
       <div class="lm_suggroup"><div class="lm_sugtitle">${title}${hint ? ` <small>${hint}</small>` : ''}</div>
         <div class="lm_sugchips">${list.map(k => {
@@ -606,33 +611,49 @@ function thaiSugBox(e) {
             const added = (e.key ?? []).includes(k);
             return `<button class="lm_sugchip ${added ? 'lm_added' : ''} ${w.length ? 'lm_sugwarn' : ''}" data-act="e-sugadd" data-k="${esc(k)}" ${added ? 'disabled' : ''} title="${esc(w.map(x => x.text).join('\n'))}">${icon(added ? 'fa-check' : 'fa-plus')} ${esc(k)}${w.length ? ` ${icon('fa-triangle-exclamation')}` : ''}</button>`;
         }).join('')}</div></div>` : '';
-    const r = s.rec;
-    const warned = [...r.translit, ...r.nick, ...r.translated].map(k => [k, vetThaiKey(k, e, all, wc)]).filter(([, w]) => w.length);
-    const easy = [...r.translit, ...r.nick].filter(k => !(e.key ?? []).includes(k) && !vetThaiKey(k, e, all, wc).length);
+    const every = [...r.origin, ...r.english, ...r.nick, ...r.translated];
+    const warned = every.map(k => [k, vetThaiKey(k, e, all, wc)]).filter(([, w]) => w.length);
+    const easy = [...r.origin, ...r.english, ...r.nick].filter(k => !(e.key ?? []).includes(k) && !vetThaiKey(k, e, all, wc).length);
     return `
     <div class="lm_sugbox">
-      ${group('ทับศัพท์', r.translit)}${group('ชื่อเล่น / คำเรียก', r.nick)}${group('แปล', r.translated, 'เลือกเพิ่มเอง')}
-      ${!r.translit.length && !r.nick.length && !r.translated.length ? '<div class="lm_dim">AI ไม่มีคีย์ใหม่ให้</div>' : ''}
+      ${group(r.langs.length ? `ตามภาษาต้นทาง (${r.langs.map(l => esc(LANG_LABEL[l] ?? l)).join('/')})` : 'ถอดเสียง', r.origin)}${group('อ่านแบบอังกฤษ', r.english)}${group('ชื่อเล่น / คำเรียก', r.nick)}${group('แปล', r.translated, 'เลือกเพิ่มเอง')}
+      ${!every.length ? '<div class="lm_dim">AI ไม่มีคีย์ใหม่ให้</div>' : ''}
       ${warned.length ? `<ul class="lm_keywarn">${warned.map(([k, w]) => `<li class="lm_w_warn"><b>${esc(k)}</b> — ${esc(w.map(x => x.text).join(' · '))}</li>`).join('')}</ul>` : ''}
+      <div class="lm_hint">แตะ ${icon('fa-star')} บนชิปคีย์ไทยด้านบน เพื่อเลือกตัวสะกดที่ใช้ในอภิธาน${s.fromCache ? ' · ชื่อนี้เคยถามแล้ว ใช้คำตอบเดิม ไม่เสียโควต้า' : ''}</div>
       <div class="lm_row lm_wrap">
-        ${easy.length ? `<button class="lm_btn lm_primary" data-act="e-sugall">${icon('fa-plus')} เพิ่มทับศัพท์ + ชื่อเล่น (${easy.length})</button>` : ''}
+        ${easy.length ? `<button class="lm_btn lm_primary" data-act="e-sugall">${icon('fa-plus')} เพิ่มที่แนะนำ (${easy.length})</button>` : ''}
         ${btn.replace('ให้ AI เสนอคีย์ไทย', 'ถามใหม่')}
       </div>
     </div>`;
 }
 
-async function suggestThai(e) {
+async function suggestThai(e, { fresh = false } = {}) {
     const k = ekey(e);
     const cur = { busy: true, label: '' };
     sug.set(k, cur);
     zone('thaisug', thaiSugBox(e));
+    const own = properNames(e);
+    // one-word names that are part of a full name are read off the full name's answer
+    const { names, derived } = own.length ? collectNames([e]) : { names: [], derived: new Map() };
+    const list = (names.length ? names : [String(e.comment || e.key?.[0] || '').trim()].filter(Boolean).map(n => ({ name: n, lower: n.toLowerCase() })))
+        .map((n, id) => ({ id, name: n.name, lower: n.lower, ctx: '' }));
+    const wanted = own.length ? own.map(n => n.toLowerCase()) : list.map(n => n.lower);
     try {
-        const out = await ask({
-            system: THAI_KEY_SYSTEM, user: thaiKeyRequest([e], { maxContent: 600 }), maxTokens: 800,
-            accept: text => parseThaiKeys(text, [e]),
-            onTry: label => { cur.label = label; if (ekey(curEntry() ?? {}) === k) zone('thaisug', thaiSugBox(e)); },
-        });
-        sug.set(k, { rec: out.get(e.uid) ?? { translit: [], nick: [], translated: [] } });
+        if (!list.length) throw new Error('เอนทรีนี้ไม่มีชื่อให้ถอดเสียง');
+        const cache = await nameCache();
+        let results = new Map([...cache].filter(([k]) => wanted.includes(k)));
+        const fromCache = !fresh && list.every(n => results.has(n.lower));
+        if (!fromCache) {
+            // the editor sends the content too, so nicknames can be found
+            results = await ask({
+                task: 'keys', system: NAME_SYSTEM, user: nameRequest(list, { context: e.content }), maxTokens: 200 * list.length + 400,
+                accept: text => parseNameReply(text, list),
+                onTry: label => { cur.label = label; if (ekey(curEntry() ?? {}) === k) zone('thaisug', thaiSugBox(e)); },
+            });
+            await rememberNames(results);
+        }
+        deriveNames(results, derived);
+        sug.set(k, { rec: entrySuggestions(e, wanted, results), fromCache });
     } catch (err) {
         sug.set(k, { error: `AI ตอบไม่ได้: ${String(err?.message ?? err).split('\n')[0]}` });
     }
@@ -658,7 +679,7 @@ async function condenseEntry(e) {
     let text = null;
     try {
         text = await ask({
-            system: CONDENSE_SYSTEM, user: condenseRequest(e, ratio), maxTokens: Math.max(600, Math.round(estTokens(e.content) * 1.2)),
+            task: 'condense', system: CONDENSE_SYSTEM, user: condenseRequest(e, ratio), maxTokens: Math.max(600, Math.round(estTokens(e.content) * 1.2)),
             accept: out => { const t = cleanCondensed(out, e.content); if (!t) throw new Error('ได้เนื้อหาที่ใช้ไม่ได้ (ยาวเท่าเดิม สั้นเกินไป หรือ {{char}}/{{user}} หาย)'); return t; },
             onTry: label => { aiBusy.set(k, `กำลังถาม ${label}…`); if (curEntry()?.uid === e.uid) zone('condense', condenseBar(e)); },
         });
@@ -799,7 +820,17 @@ act('click', {
         if (r === 'del') return delEntry();
     },
     'entry-dup': () => dupEntry(),
-    'e-thai': () => { const e = curEntry(); if (e) suggestThai(e); },
+    'e-thai': el => { const e = curEntry(); if (e) suggestThai(e, { fresh: /ถามใหม่/.test(el.textContent) }); },
+    'chip-star': el => {
+        const e = curEntry();
+        if (!e) return;
+        const k = (e.key ?? [])[Number(el.dataset.i)];
+        if (!k) return;
+        e.key = preferThaiKey(e.key, k);
+        St.touch();
+        zone('key', chipBox(e, 'key'));
+        toast.info(`ใช้ “${k}” เป็นตัวสะกดในอภิธาน (อัปเดตอภิธานจากเมนู ⋯ ของเล่ม)`, '', { timeOut: 3500 });
+    },
     'e-sugadd': el => {
         const e = curEntry();
         if (!e) return;
@@ -812,8 +843,11 @@ act('click', {
         const s = e && sug.get(ekey(e));
         if (!s?.rec) return;
         const all = St.entryList();
-        const add = [...s.rec.translit, ...s.rec.nick].filter(k => !vetThaiKey(k, e, all, warnCtx()).length);
+        const add = [...s.rec.origin, ...s.rec.english, ...s.rec.nick].filter(k => !vetThaiKey(k, e, all, warnCtx()).length);
+        const hadThai = (e.key ?? []).some(k => THAI.test(k));
         e.key = cleanKeys([...(e.key ?? []), ...add]);
+        // no Thai key before: the first origin-language spelling becomes the glossary spelling
+        if (!hadThai && add.length) e.key = preferThaiKey(e.key, add[0]);
         St.touch();
         zone('key', chipBox(e, 'key')); zone('thaisug', thaiSugBox(e)); zone('live', liveTest(e));
     },
