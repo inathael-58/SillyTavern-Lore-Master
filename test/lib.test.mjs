@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    detectFormat, readLorebook, mergeBooks, toWorld, cleanKeys, titleParts, keyMatches, firingKey,
+    detectFormat, readLorebook, mergeBooks, toWorld, cleanKeys, titleParts, splitCategory, categorize, keyMatches, firingKey,
     simulate, diagnose, applyChanges, overCap, estTokens, LOGIC, POSITION,
     entryStatus, entriesOf, freeUid, newEntry, keyWarnings, entryWarnings, entryMatches, positionShort, bookStats, SORTS,
     parseJsonLoose, properNames, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
@@ -511,4 +511,24 @@ test('issues come in the recommended order and say what fixing costs', () => {
         assert.ok(i.kind === 'safe' || i.kind === 'keys', i.id);
         assert.ok(i.fix && i.tradeoff, i.id);
     }
+});
+
+test('splitCategory reads a short leading category', () => {
+    assert.deepEqual(splitCategory('[NPC] Cody'), { cat: 'NPC', rest: 'Cody' });
+    assert.deepEqual(splitCategory('【สถานที่】ตลาดน้ำ'), { cat: 'สถานที่', rest: 'ตลาดน้ำ' });
+    assert.deepEqual(splitCategory('สถานที่: ตลาดน้ำ'), { cat: 'สถานที่', rest: 'ตลาดน้ำ' });
+    assert.deepEqual(splitCategory('Cody - วัยเด็ก'), { cat: 'Cody', rest: 'วัยเด็ก' });
+    assert.equal(splitCategory('Cody'), null);
+    assert.equal(splitCategory('12:30 meeting'), null);
+    assert.equal(splitCategory('A very long sentence that is clearly not a category at all: x'), null);
+});
+
+test('categorize keeps only prefixes shared by several entries', () => {
+    const m = categorize([
+        { uid: 1, comment: '[NPC] Cody' }, { uid: 2, comment: '[npc] Mira' },
+        { uid: 3, comment: 'Cody - childhood' }, { uid: 4, comment: 'Plain' },
+    ]);
+    assert.deepEqual([...m.keys()], [1, 2]);
+    assert.equal(m.get(2).cat, 'NPC');
+    assert.equal(m.get(2).rest, 'Mira');
 });

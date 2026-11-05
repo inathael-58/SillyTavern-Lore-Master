@@ -28,7 +28,7 @@ import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor,
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.6.3'; // keep in sync with manifest.json
+const VERSION = '0.7.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'settingsview.js', 'style.css', 'manifest.json'];
@@ -433,12 +433,37 @@ function onScanDone(args) {
         const books = {};
         for (const e of act) books[e.world] = (books[e.world] ?? 0) + 1;
         status.scan = { at: Date.now(), count: act.length, tokens: sumTokens(act), books, loaded: status.loadedCount, braked: !!lastTrip && lastTrip.at >= (status.loadedAt ?? 0) };
+        noteFired(act);
     }
     // the last loop of the scan: send only the glossary names that matter this turn
     if (glossLines.length && !args?.state?.next) {
         const picked = pickGlossary(glossLines, { text: recentChat(), activated: [...map.values()] });
         setGlossaryPrompt(picked.length ? `${GLOSSARY_HEAD}\n${picked.map(l => `- ${l.en} = ${l.th}`).join('\n')}` : '');
     }
+}
+
+// ---------------------------------------------------------------- runtime: what fired in this chat
+// Per chat, since SillyTavern loaded: how many turns each entry fired, and which fired last turn.
+// The book screen shows these on top, because the entry someone wants to fix is usually one
+// that just showed up in the chat.
+
+const fired = { chat: null, turns: new Map(), last: new Set() }; // keys: `${world}\u0000${uid}`
+const firedKey = (world, uid) => `${world}\u0000${uid}`;
+function noteFired(act) {
+    const chat = St.ctx().chatId ?? '';
+    if (chat !== fired.chat) { fired.chat = chat; fired.turns.clear(); }
+    fired.last = new Set(act.map(e => firedKey(e.world, e.uid)));
+    for (const k of fired.last) fired.turns.set(k, (fired.turns.get(k) ?? 0) + 1);
+}
+/** For one book in the open chat: { turns: Map(String(uid) → turns fired), last: Set(String(uid)) }, or null. */
+function firedIn(book) {
+    if (!book || fired.chat === null || fired.chat !== (St.ctx().chatId ?? '')) return null;
+    const turns = new Map();
+    const last = new Set();
+    const pre = `${book}\u0000`;
+    for (const [k, n] of fired.turns) if (k.startsWith(pre)) turns.set(k.slice(pre.length), n);
+    for (const k of fired.last) if (k.startsWith(pre)) last.add(k.slice(pre.length));
+    return turns.size ? { turns, last } : null;
 }
 
 // ---------------------------------------------------------------- runtime: emergency brake
@@ -725,6 +750,6 @@ function registerCommands() {
     setTimeout(() => checkForNewVersion(), 3000);
     if (E.CHAT_CHANGED) eventSource.on(E.CHAT_CHANGED, () => checkForNewVersion());
     setInterval(() => { if (!document.getElementById('lm_wand') && settings().wand) renderWand(); if (!document.getElementById('lm_wi_btn') && settings().stPanelButton) renderWiButton(); }, 4000);
-    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), openEntry, version: VERSION, lastCut: () => lastCut, lastTrip: () => lastTrip, glossary: () => glossLines, remote: () => remoteVersion, isStale: () => !!remoteVersion && newer(remoteVersion, VERSION), status: () => ({ ...status, events: { before: !!E.WORLDINFO_ENTRIES_LOADED, after: !!E.WORLDINFO_SCAN_DONE } }) };
+    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), openEntry, version: VERSION, lastCut: () => lastCut, fired: firedIn, lastTrip: () => lastTrip, glossary: () => glossLines, remote: () => remoteVersion, isStale: () => !!remoteVersion && newer(remoteVersion, VERSION), status: () => ({ ...status, events: { before: !!E.WORLDINFO_ENTRIES_LOADED, after: !!E.WORLDINFO_SCAN_DONE } }) };
     console.log(LOG, `v${VERSION} ready`);
 })();

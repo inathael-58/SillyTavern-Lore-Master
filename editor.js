@@ -5,13 +5,13 @@
 
 import {
     entryStatus, entryWarnings, entryMatches, keyWarnings, positionShort, positionInfo, POSITION_INFO, ROLE_INFO,
-    LOGIC_INFO, TRIGGER_INFO, SORTS, estTokens, cleanKeys, firingKey, THAI, entriesOf, LONG_TOKENS, isGlossary,
+    LOGIC_INFO, TRIGGER_INFO, SORTS, estTokens, categorize, cleanKeys, firingKey, THAI, entriesOf, LONG_TOKENS, isGlossary,
     NAME_SYSTEM, properNames, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, LANG_LABEL, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
 } from './lib.js';
 import { ask } from './ai.js';
 import { nameCache, rememberNames } from './cache.js';
 import { backupPut, backupList } from './backup.js';
-import { settings } from './prefs.js';
+import { settings, save } from './prefs.js';
 import * as St from './store.js';
 import { esc, icon, act, shell, UI, top, push, back, goTab, sheet, confirmBox, promptBox, previewBox, pickBook, download, toast, fmt, switchHtml, rangeHtml } from './ui.js';
 
@@ -30,7 +30,10 @@ const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric:
 export const hooks = { checkBook: async () => {}, importFiles: async () => {}, mergeBooks: () => {}, thaiBook: async () => {}, condenseBook: async () => {} };
 
 const PAGE = 60; // entry cards shown at once (books with 500+ entries stay fast)
-const L = { q: '', bookQ: '', filter: 'all', sort: 'book', selecting: false, selected: new Set(), focus: null, limit: PAGE };
+const L = { q: '', bookQ: '', filter: 'all', sort: 'book', selecting: false, selected: new Set(), focus: null, limit: PAGE,
+    openGroups: new Set(['__fired']), glimit: {} };
+/** Groups drawn last render, so a section opened by tap can be filled without re-rendering the screen. */
+let drawn = new Map(); // key -> { list, titles: Map(uid → shown title), hot: Set(uid) }
 
 const USE_TAGS = {
     chat: ['fa-comment', 'แชทนี้'],
@@ -214,6 +217,7 @@ const FILTERS = {
 export async function enterBook(name) {
     if (St.cur?.name !== name) {
         L.bookQ = ''; L.filter = 'all'; L.selecting = false; L.selected.clear(); L.limit = PAGE;
+        L.openGroups = new Set(['__fired']); L.glimit = {};
     }
     await St.openBook(name);
 }
@@ -246,19 +250,102 @@ export function viewBook(v) {
         <div class="lm_toolbar">
           <div class="lm_search lm_grow">${icon('fa-magnifying-glass')}<input type="search" class="lm_input" placeholder="ค้นหาชื่อ คีย์ เนื้อหา…" value="${esc(L.bookQ)}" data-act="book-q" enterkeyhint="search"></div>
           <button class="lm_btn lm_sortbtn" data-act="book-sort" aria-label="เรียง">${icon('fa-arrow-down-wide-short')}<span>${SORTS[L.sort].label}</span></button>
+          <button class="lm_btn lm_sortbtn" data-act="book-view" aria-label="มุมมอง">${icon(settings().entryView === 'row' ? 'fa-list' : 'fa-table-cells-large')}</button>
         </div>
         <div class="lm_chiprow">${Object.entries(FILTERS).map(([k, f]) => {
             const n = k === 'all' ? all.length : all.filter(f.fn).length;
             return `<button class="lm_fchip ${L.filter === k ? 'lm_on' : ''}" data-act="book-filter" data-k="${k}" ${!n && k !== 'all' ? 'disabled' : ''}>${f.label} <b>${n}</b></button>`;
         }).join('')}</div>
-        <div class="lm_entries">${list.length ? list.slice(0, L.limit).map(e => entryCard(e, wc)).join('') : `<div class="lm_empty">${icon('fa-feather')}<div>${all.length ? 'ไม่เจอเอนทรีที่ตรง' : 'เล่มนี้ยังว่าง กด + เพื่อเพิ่มเอนทรีแรก'}</div></div>`}</div>
-        ${list.length > L.limit ? `<div class="lm_row lm_centerrow"><button class="lm_btn" data-act="book-more">${icon('fa-angles-down')} แสดงเพิ่ม (อีก ${list.length - L.limit})</button></div>` : ''}
+        <div class="lm_entrybox">${entriesBlock(list, all, wc)}</div>
         <div class="lm_bottom_pad"></div>
         ${L.selecting ? selectBar(list) : `<button class="lm_fab" data-act="entry-new" aria-label="เพิ่มเอนทรี">${icon('fa-plus')}</button>`}`,
     };
 }
 
-function entryCard(e, wc) {
+/**
+ * The entries of one book, as one list or in sections:
+ *   ติดในแชทนี้ (what the scans of this chat put in, latest turn first) — when there is any,
+ *   then one section per title category ("[NPC] Cody", "สถานที่: ตลาด") when the book uses them,
+ *   then ไม่มีหมวด for the rest. Closed sections render nothing until opened (books of 500+ entries).
+ */
+function entriesBlock(list, all, wc) {
+    drawn = new Map();
+    if (!list.length) return `<div class="lm_empty">${icon('fa-feather')}<div>${all.length ? 'ไม่เจอเอนทรีที่ตรง' : 'เล่มนี้ยังว่าง กด + เพื่อเพิ่มเอนทรีแรก'}</div></div>`;
+    let html = '';
+    const f = globalThis.LoreMaster?.fired?.(St.cur?.name);
+    if (f && !L.selecting) {
+        const hit = list.filter(e => f.turns.has(String(e.uid)))
+            .sort((a, b) => f.last.has(String(b.uid)) - f.last.has(String(a.uid)) || f.turns.get(String(b.uid)) - f.turns.get(String(a.uid)));
+        if (hit.length) {
+            const nLast = hit.filter(e => f.last.has(String(e.uid))).length;
+            html += section('__fired', `${icon('fa-bolt')} ติดในแชทนี้`, hit, wc, {
+                note: nLast ? `เทิร์นล่าสุด ${nLast}` : '', hot: new Set(hit.filter(e => f.last.has(String(e.uid))).map(e => e.uid)), cls: 'lm_group_fired',
+            });
+        }
+    }
+    const cats = settings().groupBy === 'title' ? categorize(all) : new Map();
+    if (cats.size) {
+        const groups = new Map();
+        const rest = [];
+        for (const e of list) {
+            const c = cats.get(e.uid);
+            if (!c) { rest.push(e); continue; }
+            if (!groups.has(c.cat)) groups.set(c.cat, []);
+            groups.get(c.cat).push(e);
+        }
+        for (const name of [...groups.keys()].sort(collator.compare)) {
+            const arr = groups.get(name);
+            html += section(`c:${name}`, `${icon('fa-folder')} ${esc(name)}`, arr, wc, { titles: new Map(arr.map(e => [e.uid, cats.get(e.uid).rest])) });
+        }
+        if (rest.length) html += section('__rest', `${icon('fa-folder-open')} ไม่มีหมวด`, rest, wc, {});
+        return html;
+    }
+    if (html) html += `<div class="lm_h lm_allhead">${icon('fa-list')} ทุกเอนทรี <small>· ${list.length}</small></div>`;
+    return html + `<div class="${listCls()}">${list.slice(0, L.limit).map(e => entryItem(e, wc)).join('')}</div>
+        ${list.length > L.limit ? `<div class="lm_row lm_centerrow"><button class="lm_btn" data-act="book-more">${icon('fa-angles-down')} แสดงเพิ่ม (อีก ${list.length - L.limit})</button></div>` : ''}`;
+}
+
+const listCls = () => `lm_entries ${settings().entryView === 'row' ? 'lm_rows' : ''}`;
+const entryItem = (e, wc, title, hot) => settings().entryView === 'row' ? entryRow(e, wc, title, hot) : entryCard(e, wc, title, hot);
+
+/** One collapsible section. Searching opens every section that has a match. */
+function section(key, label, list, wc, { titles = new Map(), hot = new Set(), note = '', cls = '' }) {
+    drawn.set(key, { list, titles, hot });
+    const open = !!L.bookQ.trim() || L.openGroups.has(key);
+    const tokens = list.reduce((n, e) => n + (e.disable ? 0 : estTokens(e.content)), 0);
+    return `
+    <details class="lm_group ${cls}" data-group="${esc(key)}" ${open ? 'open' : ''}>
+      <summary><span class="lm_gname">${label}</span><span class="lm_gcount">${list.length}</span>
+        <span class="lm_gnote">${note ? `${esc(note)} · ` : ''}≈${fmt(tokens)}</span></summary>
+      ${open ? sectionBody(key, wc) : ''}
+    </details>`;
+}
+function sectionBody(key, wc = warnCtx()) {
+    const g = drawn.get(key);
+    if (!g) return '';
+    const lim = L.glimit[key] ?? PAGE;
+    return `<div class="${listCls()}">${g.list.slice(0, lim).map(e => entryItem(e, wc, g.titles.get(e.uid), g.hot.has(e.uid))).join('')}</div>
+      ${g.list.length > lim ? `<div class="lm_row lm_centerrow"><button class="lm_btn" data-act="group-more" data-group="${esc(key)}">${icon('fa-angles-down')} แสดงเพิ่ม (อีก ${g.list.length - lim})</button></div>` : ''}`;
+}
+
+/** One line per entry: status, name, tokens, switch. Fits two to three times as many on a phone. */
+function entryRow(e, wc, title, hot) {
+    const st = entryStatus(e);
+    const warns = entryWarnings(e, wc);
+    const sel = L.selected.has(e.uid);
+    return `
+    <div class="lm_erow lm_st_${st} ${sel ? 'lm_sel' : ''}" data-act="${L.selecting ? 'entry-pick' : 'openentry'}" data-uid="${e.uid}" role="button" tabindex="0">
+      ${L.selecting ? `<span class="lm_pickbox">${sel ? icon('fa-square-check') : icon('fa-square')}</span>` : ''}
+      <span class="lm_stdot"></span>
+      <span class="lm_erow_title">${esc(title || e.comment || '(ไม่มีชื่อ)')}</span>
+      ${hot ? `<span class="lm_hot" title="ติดเทิร์นล่าสุด">${icon('fa-bolt')}</span>` : ''}
+      ${warns.length ? `<span class="lm_erow_warn" title="${esc(warns.join('\n'))}">${icon('fa-triangle-exclamation')}</span>` : ''}
+      <span class="lm_erow_tok">${fmt(estTokens(e.content))}</span>
+      ${L.selecting ? '' : `<span data-stop>${switchHtml(`data-act="entry-toggle" data-uid="${e.uid}"`, !e.disable, e.disable ? 'เปิดใช้' : 'ปิดใช้')}</span>`}
+    </div>`;
+}
+
+function entryCard(e, wc, title, hot) {
     const st = entryStatus(e);
     const warns = entryWarnings(e, wc);
     const keys = e.key ?? [];
@@ -275,7 +362,8 @@ function entryCard(e, wc) {
       <div class="lm_grow lm_minw0">
         <div class="lm_entry_top">
           <span class="lm_stdot" title="${{ key: 'ติดเมื่อเจอคีย์', constant: 'ติดตลอด', off: 'ปิดอยู่', vector: 'Vector' }[st]}"></span>
-          <span class="lm_entry_title">${esc(e.comment || '(ไม่มีชื่อ)')}</span>
+          <span class="lm_entry_title">${esc(title || e.comment || '(ไม่มีชื่อ)')}</span>
+          ${hot ? `<span class="lm_hot" title="ติดเทิร์นล่าสุด">${icon('fa-bolt')}</span>` : ''}
           ${warns.length ? `<span class="lm_warnpill" title="${esc(warns.join('\n'))}">${icon('fa-triangle-exclamation')} ${warns.length}</span>` : ''}
         </div>
         ${st === 'constant' ? '<div class="lm_keys"><span class="lm_kchip lm_kconst">ติดตลอด</span></div>'
@@ -751,6 +839,30 @@ act('click', {
     'book-select': () => { L.selecting = !L.selecting; L.selected.clear(); shell.render(); },
     'book-filter': el => { L.filter = el.dataset.k; L.limit = PAGE; shell.render(); },
     'book-more': () => { L.limit += PAGE * 2; shell.render(); },
+    'group-more': el => { const k = el.dataset.group; L.glimit[k] = (L.glimit[k] ?? PAGE) + PAGE * 2; shell.render(); },
+    'book-view': async () => {
+        const s = settings();
+        const v = await sheet({
+            title: 'มุมมอง',
+            items: [
+                { value: 'card', label: 'การ์ด', hint: 'เห็นคีย์ ตำแหน่ง order', icon: 'fa-table-cells-large', on: s.entryView !== 'row' },
+                { value: 'row', label: 'แถวเดียว', hint: 'ชื่อกับโทเคน เห็นได้ทีละเยอะ', icon: 'fa-list', on: s.entryView === 'row' },
+                '-',
+                { value: 'g-title', label: 'จัดหมวดจากชื่อเอนทรี', hint: 'เช่น [NPC] Cody · สถานที่: ตลาด · Cody - วัยเด็ก', icon: 'fa-folder-tree', on: s.groupBy === 'title' },
+                { value: 'g-none', label: 'ไม่จัดหมวด', icon: 'fa-bars', on: s.groupBy !== 'title' },
+                '-',
+                { value: 'open', label: 'กางทุกหมวด', icon: 'fa-angles-down' },
+                { value: 'close', label: 'พับทุกหมวด', icon: 'fa-angles-up' },
+            ],
+        });
+        if (!v) return;
+        if (v === 'card' || v === 'row') s.entryView = v;
+        if (v === 'g-title') s.groupBy = 'title';
+        if (v === 'g-none') s.groupBy = 'none';
+        if (v === 'open') { for (const k of drawn.keys()) L.openGroups.add(k); }
+        if (v === 'close') L.openGroups.clear();
+        save(); shell.render();
+    },
     'book-sort': async () => {
         const v = await sheet({ title: 'เรียงตาม', items: Object.entries(SORTS).map(([k, s]) => ({ value: k, label: s.label, on: L.sort === k })) });
         if (v) { L.sort = v; shell.render(); }
@@ -936,8 +1048,8 @@ act('input', {
             const wc = warnCtx();
             const list = St.entryList().filter(FILTERS[L.filter].fn).filter(e => entryMatches(e, L.bookQ));
             if (L.sort !== 'book') list.sort(SORTS[L.sort].fn);
-            const box = shell.root?.querySelector('.lm_entries');
-            if (box) box.innerHTML = list.length ? list.slice(0, L.limit).map(e => entryCard(e, wc)).join('') : `<div class="lm_empty">${icon('fa-feather')}<div>ไม่เจอเอนทรีที่ตรง</div></div>`;
+            const box = shell.root?.querySelector('.lm_entrybox');
+            if (box) box.innerHTML = entriesBlock(list, St.entryList(), wc);
         }, 150);
     },
     'chip-in': el => { if (/[,，、\n]/.test(el.value)) { const v = el.value; el.value = ''; addChips(el.dataset.field, v); } },
@@ -998,6 +1110,15 @@ export function onFocusOut(ev) {
 export function onToggleDetails(ev) {
     const d = ev.target;
     if (d?.dataset?.adv) d.open ? advOpen.add(d.dataset.adv) : advOpen.delete(d.dataset.adv);
+    // a section of the book screen: remember it, and fill it the first time it opens.
+    // Sections opened by a search are not remembered (toggle also fires when a render opens them).
+    if (d?.dataset?.group && !L.bookQ.trim()) {
+        const k = d.dataset.group;
+        if (d.open) {
+            L.openGroups.add(k);
+            if (!d.querySelector('.lm_entries')) d.insertAdjacentHTML('beforeend', sectionBody(k));
+        } else L.openGroups.delete(k);
+    }
 }
 
 export { L as editorState, entriesOf };
