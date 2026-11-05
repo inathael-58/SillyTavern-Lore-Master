@@ -24,11 +24,12 @@ import * as St from './store.js';
 import { settings, save, migrated } from './prefs.js';
 import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast, paintRange } from './ui.js';
 import { viewLibrary, viewBook, viewEntry, enterBook, hooks, onFieldEvent, onFocusOut, onToggleDetails, focusAfterRender, autosize } from './editor.js';
+import { viewOrganize, onOrganizeToggle } from './organize.js';
 import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, onDoctorToggle } from './doctor.js';
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.7.1'; // keep in sync with manifest.json
+const VERSION = '0.8.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'settingsview.js', 'style.css', 'manifest.json'];
@@ -56,7 +57,7 @@ function ensureRoot() {
     root.addEventListener('input', ev => { paintRange(ev.target); if (!onFieldEvent(ev)) dispatch('input', ev); });
     root.addEventListener('keydown', onKeydown);
     root.addEventListener('focusout', onFocusOut);
-    root.addEventListener('toggle', ev => { onToggleDetails(ev); onDoctorToggle(ev); }, true);
+    root.addEventListener('toggle', ev => { onToggleDetails(ev); onDoctorToggle(ev); onOrganizeToggle(ev); }, true);
     return root;
 }
 
@@ -113,7 +114,7 @@ function render() {
     let view;
     try {
         view = UI.tab === 'doctor' ? viewDoctor() : UI.tab === 'settings' ? viewSettings()
-            : v.v === 'book' ? viewBook(v) : v.v === 'entry' ? viewEntry(v) : viewLibrary();
+            : v.v === 'book' ? viewBook(v) : v.v === 'entry' ? viewEntry(v) : v.v === 'organize' ? viewOrganize(v) : viewLibrary();
     } catch (e) {
         console.error(LOG, e);
         view = { title: 'Lore Master', body: `<div class="lm_card lm_err">เกิดข้อผิดพลาด: ${esc(e?.message ?? e)}</div>` };
