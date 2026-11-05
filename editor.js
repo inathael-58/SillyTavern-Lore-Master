@@ -13,7 +13,7 @@ import { nameCache, rememberNames } from './cache.js';
 import { backupPut, backupList } from './backup.js';
 import { settings } from './prefs.js';
 import * as St from './store.js';
-import { esc, icon, act, shell, UI, top, push, back, goTab, sheet, confirmBox, promptBox, previewBox, pickBook, download, toast, fmt, switchHtml } from './ui.js';
+import { esc, icon, act, shell, UI, top, push, back, goTab, sheet, confirmBox, promptBox, previewBox, pickBook, download, toast, fmt, switchHtml, rangeHtml } from './ui.js';
 
 let thaiSeg = null;
 try { thaiSeg = new Intl.Segmenter('th', { granularity: 'word' }); } catch { thaiSeg = null; }
@@ -429,7 +429,7 @@ export function viewEntry(v) {
           <div class="lm_label">ขั้นสูง</div>
           ${advGroup('prob', 'fa-dice', 'ความน่าจะเป็น', adv.prob, `
             <label class="lm_checkrow"><input type="checkbox" data-f="useProbability" data-type="check" ${e.useProbability !== false ? 'checked' : ''}><span>ใช้ความน่าจะเป็น</span></label>
-            <div class="lm_rangeRow"><input type="range" min="0" max="100" data-f="probability" data-type="num" value="${e.probability ?? 100}"><output>${e.probability ?? 100}%</output></div>
+            <div class="lm_rangeRow">${rangeHtml('data-f="probability" data-type="num"', e.probability ?? 100, 0, 100)}<output class="lm_valpill">${e.probability ?? 100}%</output></div>
             <div class="lm_hint">ติดแล้วยังต้องสุ่มผ่านก่อนถึงจะเข้า prompt เช่น 30% = ติด 3 ใน 10 ครั้ง ใช้ทำเหตุการณ์สุ่ม</div>`)}
           ${advGroup('group', 'fa-layer-group', 'กลุ่ม (Inclusion Group)', adv.group, `
             <label><span class="lm_label">ชื่อกลุ่ม</span><input class="lm_input" data-f="group" value="${esc(e.group ?? '')}" placeholder="เช่น อารมณ์ของ Cody (คั่นหลายกลุ่มด้วย ,)"></label>

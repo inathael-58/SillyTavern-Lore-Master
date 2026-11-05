@@ -5,7 +5,7 @@
 
 import * as St from './store.js';
 import { settings, save, DEFAULTS } from './prefs.js';
-import { esc, icon, act, shell, sheet, toast, switchHtml } from './ui.js';
+import { esc, icon, act, shell, sheet, toast, switchHtml, rangeHtml, paintRange } from './ui.js';
 import { aiSettings, profiles, memoryHubSources, copyFromMemoryHub, ask, lastCall, TASKS, usedToday, sourceLabel } from './ai.js';
 import { nameCache, clearNameCache } from './cache.js';
 
@@ -89,9 +89,12 @@ function globalRow(def) {
         return `<div class="lm_setrow lm_setcol"><div><b>${esc(def.label)}</b><small>${esc(def.help)}</small></div>
           <select class="lm_input" data-act="s-global" data-id="${def.id}">${def.options.map(([val, lab]) => `<option value="${val}" ${Number(v) === val ? 'selected' : ''}>${esc(lab)}</option>`).join('')}</select></div>`;
     }
-    return `<div class="lm_setrow lm_setcol"><div><b>${esc(def.label)}</b><small>${esc(def.help)}</small></div>
-      <div class="lm_rangeRow"><input type="range" min="${def.min}" max="${Math.min(def.max, def.id === 'world_info_budget_cap' ? 8192 : def.id === 'world_info_depth' ? 50 : def.max)}" value="${v}" data-act="s-global" data-id="${def.id}">
-      <input type="number" class="lm_input lm_num" min="${def.min}" max="${def.max}" value="${v}" data-act="s-global" data-id="${def.id}" inputmode="numeric">${def.unit ? `<span>${def.unit}</span>` : ''}</div></div>`;
+    const max = Math.min(def.max, def.id === 'world_info_budget_cap' ? 8192 : def.id === 'world_info_depth' ? 50 : def.max);
+    return `<div class="lm_setrow lm_setcol lm_rangeset">
+      <div class="lm_rangehead"><b>${esc(def.label)}</b>
+        <label class="lm_valbox"><input type="number" min="${def.min}" max="${def.max}" value="${v}" data-act="s-global" data-id="${def.id}" inputmode="numeric" aria-label="${esc(def.label)}">${def.unit ? `<span>${def.unit}</span>` : ''}</label></div>
+      ${rangeHtml(`data-act="s-global" data-id="${def.id}" aria-label="${esc(def.label)}"`, v, def.min, max)}
+      <small>${esc(def.help)}</small></div>`;
 }
 
 /** What Lore Master sees: is it hooked into the scan, what did the last scan put in, how big is the context. */
@@ -263,8 +266,8 @@ act('change', {
 act('input', {
     's-global': el => {
         // keep the slider and the number box in step while dragging
-        const row = el.closest('.lm_rangeRow');
-        row?.querySelectorAll('input').forEach(x => { if (x !== el) x.value = el.value; });
+        const row = el.closest('.lm_rangeset');
+        row?.querySelectorAll('input').forEach(x => { if (x !== el) { x.value = el.value; paintRange(x); } });
     },
 });
 

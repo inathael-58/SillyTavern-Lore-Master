@@ -20,13 +20,13 @@ import {
 } from './lib.js';
 import * as St from './store.js';
 import { settings, save } from './prefs.js';
-import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast } from './ui.js';
+import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast, paintRange } from './ui.js';
 import { viewLibrary, viewBook, viewEntry, enterBook, hooks, onFieldEvent, onFocusOut, onToggleDetails, focusAfterRender, autosize } from './editor.js';
 import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, onDoctorToggle } from './doctor.js';
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.5.0'; // keep in sync with manifest.json
+const VERSION = '0.5.1'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'settingsview.js', 'style.css', 'manifest.json'];
@@ -51,7 +51,7 @@ function ensureRoot() {
     shell.root = root;
     root.addEventListener('click', onClick);
     root.addEventListener('change', ev => dispatch('change', ev));
-    root.addEventListener('input', ev => { if (!onFieldEvent(ev)) dispatch('input', ev); });
+    root.addEventListener('input', ev => { paintRange(ev.target); if (!onFieldEvent(ev)) dispatch('input', ev); });
     root.addEventListener('keydown', onKeydown);
     root.addEventListener('focusout', onFocusOut);
     root.addEventListener('toggle', ev => { onToggleDetails(ev); onDoctorToggle(ev); }, true);
