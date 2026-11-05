@@ -648,7 +648,7 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_valbox, #lm_root .lm_valpill {
     flex: none; display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px;
     height: 32px; min-width: 64px; margin: 0; padding: 0 12px; box-sizing: border-box;
-    border-radius: 9px; border: 1px solid var(--lm-border); cursor: text;
+    border-radius: 9px; border: 1px solid color-mix(in srgb, var(--lm-fg) 16%, transparent); cursor: text;
     background: var(--lm-surface2); color: var(--lm-fg);
     font-weight: 700; font-variant-numeric: tabular-nums;
     transition: border-color 0.15s, box-shadow 0.15s;
@@ -657,7 +657,9 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_valbox:focus-within { border-color: var(--lm-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--lm-accent) 22%, transparent); }
 #lm_root .lm_valbox input,
 #lm_root .lm_valbox input:focus {
-    -webkit-appearance: none !important; -moz-appearance: textfield !important; appearance: textfield !important;
+    /* none, not textfield: Safari reads appearance and -webkit-appearance as one property, and textfield
+     * makes iOS paint its own white inset field over the transparent background */
+    -webkit-appearance: none !important; appearance: none !important;
     display: block !important; flex: none !important;
     width: calc(var(--w, 4) * 1ch + 2px) !important; min-width: 0 !important; max-width: none !important;
     height: 30px !important; min-height: 0 !important; line-height: 30px !important;
@@ -666,6 +668,7 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
     color: inherit !important; font: inherit !important; font-size: 16px !important; /* 16px keeps iOS from zooming in */
     text-align: right !important; text-shadow: none !important;
 }
+@supports (-moz-appearance: none) { #lm_root .lm_valbox input { -moz-appearance: textfield !important; } } /* hides Firefox's spinner */
 #lm_root .lm_valbox input::-webkit-inner-spin-button, #lm_root .lm_valbox input::-webkit-outer-spin-button { -webkit-appearance: none !important; margin: 0 !important; }
 #lm_root .lm_valbox span { font-size: 12.5px; font-weight: 600; color: var(--lm-dim); }
 #lm_root .lm_rangeset > small { margin-top: 0; }
