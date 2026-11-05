@@ -76,39 +76,56 @@ export function titleParts(comment) {
 /**
  * The category a title names before the entry's own name, for grouping a long book:
  * "[NPC] Cody", "【สถานที่】ตลาดน้ำ", "สถานที่: ตลาดน้ำ", "Cody - วัยเด็ก" → { cat, rest }.
- * Only a short leading part counts (≤ 30 characters), so ordinary sentences are left alone.
+ * A bracketed prefix may be long (Lore Master's merge writes "[source book name] title", and book
+ * names are often long file names); an unbracketed one only counts when short (≤ 30 characters),
+ * so ordinary sentences are left alone.
  */
 export function splitCategory(comment) {
     const s = String(comment ?? '').trim();
-    const pick = (cat, rest) => (cat = cat.trim(), rest = rest.trim(), cat && rest && cat.length <= 30 ? { cat, rest } : null);
+    const pick = (cat, rest, max) => (cat = cat.trim(), rest = rest.trim(), cat && rest && cat.length <= max ? { cat, rest } : null);
     let m = s.match(/^[[【〔(（]([^\]】〕)）]+)[\]】〕)）]\s*(.+)$/u);
-    if (m) return pick(m[1], m[2]);
+    if (m) return pick(m[1], m[2], 100);
     m = s.match(/^([^:：]+?)\s*[:：]\s*(.+)$/u);
-    if (m && !/^\d+$/.test(m[1].trim())) return pick(m[1], m[2]);
+    if (m && !/^\d+$/.test(m[1].trim())) return pick(m[1], m[2], 30);
     m = s.match(/^(.+?)\s+[/|—–-]\s+(.+)$/u);
-    if (m) return pick(m[1], m[2]);
+    if (m) return pick(m[1], m[2], 30);
     return null;
 }
 
-/**
- * Category of each entry whose title prefix is shared by at least `min` entries (case-insensitive),
- * as Map(uid → { cat, rest }). A prefix used once is just part of a name, not a category.
- */
-export function categorize(entries, min = 2) {
+/** Entries whose title prefix is shared by at least `min` of them: Map(uid → { cat, rest }). */
+function shared(items, min) {
     const split = new Map();
     const count = new Map();
     const label = new Map();
-    for (const e of entries) {
-        const c = splitCategory(e.comment);
+    for (const { uid, title } of items) {
+        const c = splitCategory(title);
         if (!c) continue;
         const k = c.cat.toLowerCase();
-        split.set(e.uid, { ...c, k });
+        split.set(uid, { ...c, k });
         count.set(k, (count.get(k) ?? 0) + 1);
         if (!label.has(k)) label.set(k, c.cat);
     }
     const out = new Map();
     for (const [uid, c] of split) if (count.get(c.k) >= min) out.set(uid, { cat: label.get(c.k), rest: c.rest });
     return out;
+}
+
+/**
+ * Category of each entry whose title prefix is shared by at least `min` entries (case-insensitive),
+ * as Map(uid → { cat, rest }). A prefix used once is just part of a name, not a category.
+ * One level deeper when the rest has its own shared prefix: "[Book] NPC: Cody" → "Book › NPC", "Cody".
+ */
+export function categorize(entries, min = 2) {
+    const top = shared(entries.map(e => ({ uid: e.uid, title: e.comment })), min);
+    const byCat = new Map();
+    for (const [uid, c] of top) {
+        if (!byCat.has(c.cat)) byCat.set(c.cat, []);
+        byCat.get(c.cat).push({ uid, title: c.rest });
+    }
+    for (const [cat, items] of byCat) {
+        for (const [uid, c] of shared(items, min)) top.set(uid, { cat: `${cat} › ${c.cat}`, rest: c.rest });
+    }
+    return top;
 }
 
 /** Main name of an entry, normalised for comparing. */

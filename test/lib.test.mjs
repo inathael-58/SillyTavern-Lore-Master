@@ -532,3 +532,17 @@ test('categorize keeps only prefixes shared by several entries', () => {
     assert.equal(m.get(2).cat, 'NPC');
     assert.equal(m.get(2).rest, 'Mira');
 });
+
+test('categorize takes long bracketed book names and one level below them', () => {
+    const book = 'Cody Basketball and Northpoint Bears_SillyTavern_Lorebook';
+    const m = categorize([
+        { uid: 1, comment: `[${book}] Northpoint Bears` }, { uid: 2, comment: `[${book}] EMC` },
+        { uid: 3, comment: `[${book}] NPC: Coach` }, { uid: 4, comment: `[${book}] NPC: Rival` },
+        { uid: 5, comment: 'A long unbracketed sentence that is no category: at all' },
+    ]);
+    assert.equal(m.get(1).cat, book);
+    assert.equal(m.get(1).rest, 'Northpoint Bears');
+    assert.equal(m.get(3).cat, `${book} › NPC`);
+    assert.equal(m.get(3).rest, 'Coach');
+    assert.equal(m.has(5), false);
+});
