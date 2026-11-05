@@ -2,7 +2,7 @@
  * Lore Master — AI organiser: sort a book's entries into categories and give them short, tidy titles.
  *
  *   1. plan    one request with every title: the AI picks 4–12 categories for this book
- *   2. sort    requests of 60 entries (title, keys, start of text): a category and a title for each
+ *   2. sort    requests of 40 entries (title, keys, start of text): a category and a title for each
  *   3. review  the person unticks, renames, moves entries, renames or merges categories
  *   4. apply   back up the whole book, then write the category to the entry's extensions
  *              (titles stay clean; Lore Master groups by it) and, if chosen, the new title
@@ -18,7 +18,13 @@ import { settings, save } from './prefs.js';
 import * as St from './store.js';
 import { esc, icon, act, shell, UI, back, sheet, promptBox, confirmBox, toast, switchHtml } from './ui.js';
 
-const BATCH = 60;
+const BATCH = 40;
+/**
+ * Room for the answer. Many fast models think before answering, and the thinking counts against the
+ * same limit: with too little room they run out before writing anything and the reply comes back
+ * empty (seen with deepseek flash on a 295-entry plan at 1500).
+ */
+const MAX_TOKENS = 8000;
 const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric: true });
 
 /** One run, for one book. */
@@ -187,11 +193,19 @@ async function run() {
     if (!all.length) return;
     O.phase = 'running'; O.error = ''; O.abort = new AbortController();
     const signal = O.abort.signal;
+    // one more go with the same APIs before giving up: an empty or cut-off answer is often a one-off
+    const askAgain = async o => {
+        try { return await ask(o); } catch (e) {
+            if (signal.aborted) throw e;
+            O.label = 'ลองอีกครั้ง…'; shell.render();
+            return ask(o);
+        }
+    };
     try {
         if (!O.cats.length) {
             O.total = Math.ceil(all.length / BATCH); O.pending = []; shell.render();
-            O.cats = await ask({
-                task: 'organize', signal, maxTokens: 1500,
+            O.cats = await askAgain({
+                task: 'organize', signal, maxTokens: MAX_TOKENS,
                 system: organizePlanSystem(O.lang), user: organizePlanRequest(all),
                 accept: parseOrganizePlan, onTry: l => { O.label = l; shell.render(); },
             });
@@ -202,8 +216,8 @@ async function run() {
             const ids = O.pending[0];
             const byUid = new Map(all.map(e => [String(e.uid), e]));
             const batch = ids.map(id => byUid.get(id)).filter(Boolean);
-            const got = await ask({
-                task: 'organize', signal, maxTokens: 4000,
+            const got = await askAgain({
+                task: 'organize', signal, maxTokens: MAX_TOKENS,
                 system: organizeSystem(O.lang, O.cats), user: organizeRequest(batch),
                 accept: out => parseOrganizeReply(out, ids), onTry: l => { O.label = l; shell.render(); },
             });
@@ -216,7 +230,8 @@ async function run() {
             if (UI.open) shell.render();
         }
     } catch (e) {
-        O.error = String(e?.message ?? e);
+        const msg = String(e?.message ?? e);
+        O.error = msg === 'หยุดแล้ว' ? '' : `${msg}${/ว่าง|JSON|ตอบมาแค่|ไม่ได้ให้/.test(msg) ? ' · ลองกดเริ่มอีกครั้ง หรือเลือกโมเดลอื่นให้งานนี้ในหน้าตั้งค่า → AI → จัดหมวด' : ''}`;
         if (!O.rows.size) { O.phase = 'idle'; O.cats = []; O.pending = []; O.abort = null; shell.render(); return; }
     }
     O.phase = 'review'; O.abort = null;
