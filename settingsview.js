@@ -45,17 +45,17 @@ export function viewSettings() {
           <div class="lm_hint">สร้างอภิธานได้จากเมนู ⋯ ของเล่ม หรือในหน้า ตรวจ & รวม</div>
         </div>
 
+        <h3 class="lm_h">${icon('fa-right-left')} หน้า World Info เดิมของ ST <small>· ใช้คู่กันหรือใช้แทน</small></h3>
+        <div class="lm_card lm_settings">${worldInfoBlock()}</div>
+
         <h3 class="lm_h">${icon('fa-door-open')} ทางเข้า Lore Master</h3>
         <div class="lm_card lm_settings">
-          ${prefRow('replaceWorldInfo', 'ใช้แทนหน้า World Info ของ ST', 'ปุ่มหนังสือบนแถบด้านบน ปุ่มลูกโลกในการ์ด และ Chat Lore จะเปิด Lore Master แทน')}
           ${prefRow('launcher', 'ปุ่มลอย', 'ลากไปวางตรงไหนก็ได้ ดูดติดขอบ เก็บเข้า Quick Dock ได้ (เลือกปุ่มบนจอ)')}
-          ${prefRow('topbar', 'ไอคอนบนแถบด้านบน', 'ถ้าเปิด “ใช้แทนหน้า World Info” อยู่ ไม่ต้องเปิดอันนี้ก็ได้')}
+          ${prefRow('topbar', 'ไอคอนบนแถบด้านบน', s.replaceWorldInfo ? 'ตอนนี้ปุ่ม World Info ของ ST เปิด Lore Master อยู่แล้ว ไม่ต้องเปิดอันนี้ก็ได้' : 'ไอคอนแยกของ Lore Master ข้างปุ่ม World Info ของ ST')}
           ${prefRow('wand', 'เมนูไม้กายสิทธิ์ (Extensions)', '')}
-          ${prefRow('interceptImport', 'ปุ่ม Import ของ ST: ไฟล์ JanitorAI ให้เปิดที่นี่', 'ST import ไฟล์ของ JanitorAI เองไม่ได้')}
-          <div class="lm_hint">พิมพ์ <code>/lore</code> หรือ <code>/lore ชื่อเล่ม</code> ได้เสมอ ใช้ทำปุ่มใน Quick Reply / Quick Dock ได้</div>
+          <div class="lm_hint">พิมพ์ <code>/lore</code> หรือ <code>/lore ชื่อเล่ม</code> ได้เสมอ ใช้ทำปุ่มใน Quick Reply / Quick Dock ได้ · ปุ่ม “เปิดใน lorebook” ของ Lore Lens เปิดเอนทรีที่นี่ (ปิดได้ในการตั้งค่าของ Lore Lens)</div>
           <div class="lm_row lm_wrap">
             <button class="lm_btn" data-act="s-resetpos">${icon('fa-arrows-to-dot')} รีเซ็ตตำแหน่งปุ่มลอย</button>
-            <button class="lm_btn" data-act="s-stwi">${icon('fa-book-atlas')} เปิดหน้า World Info เดิมของ ST</button>
           </div>
         </div>
 
@@ -192,6 +192,25 @@ function aiBlock() {
         <button class="lm_btn" data-act="s-namesclear" ${cachedNames ? '' : 'disabled'}>${icon('fa-eraser')} ล้าง</button></div>`;
 }
 
+/** Side by side (default) or in place of ST's own World Info panel. */
+function worldInfoBlock() {
+    const on = !!settings().replaceWorldInfo;
+    const opt = (v, ic, label) => `<button class="lm_segbtn ${on === v ? 'lm_on' : ''}" data-act="s-wimode" data-v="${v ? 1 : 0}" aria-pressed="${on === v}">${icon(ic)} ${label}</button>`;
+    return `
+      <div class="lm_seg lm_seg2" role="group" aria-label="ใช้คู่กันหรือใช้แทน">
+        ${opt(false, 'fa-clone', 'ใช้คู่กัน')}
+        ${opt(true, 'fa-right-left', 'ใช้แทน')}
+      </div>
+      <div class="lm_hint">${on
+        ? '<b>ใช้แทน:</b> ปุ่มหนังสือ (World Info) บนแถบด้านบน ปุ่มลูกโลกในหน้าการ์ด และปุ่ม Chat Lore จะเปิด Lore Master แทนหน้าเดิมของ ST · ถ้าต้องการหน้าเดิมสักครั้ง กดปุ่มพร้อม Shift หรือ Alt หรือกดปุ่มด้านล่าง'
+        : '<b>ใช้คู่กัน (ค่าเริ่มต้น):</b> ปุ่มของ ST ทุกปุ่มเปิดหน้า World Info เดิมของ ST ตามปกติ ไม่มีอะไรเปลี่ยน · Lore Master เปิดจากทางของมันเองเท่านั้น (ปุ่มลอย เมนูไม้กายสิทธิ์ <code>/lore</code> ลิงก์จาก Lore Lens) · แก้เล่มเดียวกันได้ทั้งสองที่ บันทึกแล้วอีกฝั่งเห็นตาม'}</div>
+      ${prefRow('stPanelButton', 'ปุ่ม “เปิดใน Lore Master” ในหน้า World Info ของ ST', 'ปุ่มเล็กข้างปุ่ม Import เปิดเล่มที่เลือกอยู่ใน Lore Master')}
+      ${prefRow('interceptImport', 'ปุ่ม Import ของ ST: ไฟล์ JanitorAI ให้เปิดที่นี่', 'เฉพาะไฟล์ที่ ST import เองไม่ได้ (เช่นของ JanitorAI) ไฟล์ lorebook ปกติ ST import เองเหมือนเดิม')}
+      <div class="lm_row lm_wrap">
+        <button class="lm_btn" data-act="s-stwi">${icon('fa-book-atlas')} เปิดหน้า World Info เดิมของ ST</button>
+      </div>`;
+}
+
 function prefRow(key, label, help) {
     return `<div class="lm_setrow"><div class="lm_grow"><b>${esc(label)}</b>${help ? `<small>${esc(help)}</small>` : ''}</div>${switchHtml(`data-act="s-pref" data-k="${key}"`, !!settings()[key])}</div>`;
 }
@@ -236,6 +255,15 @@ act('click', {
     's-scheme': el => { settings().scheme = el.dataset.v; save(); shell.applyScheme?.(); shell.render(); },
     's-resetpos': () => { settings().launcherPos = { ...DEFAULTS.launcherPos }; settings().launcher = true; save(); shell.refreshEntryPoints?.(); shell.render(); },
     's-stwi': () => shell.openStWorldInfo?.(),
+    's-wimode': el => {
+        const on = el.dataset.v === '1';
+        if (!!settings().replaceWorldInfo === on) return;
+        settings().replaceWorldInfo = on;
+        save();
+        shell.refreshEntryPoints?.();
+        shell.render();
+        toast.success(on ? 'ปุ่ม World Info ของ ST จะเปิด Lore Master แทน' : 'ปุ่ม World Info ของ ST กลับไปเปิดหน้าเดิมแล้ว', 'Lore Master');
+    },
     's-capx': el => { delete settings().caps[el.dataset.name]; save(); shell.render(); },
     's-capadd': async () => {
         const s = settings();

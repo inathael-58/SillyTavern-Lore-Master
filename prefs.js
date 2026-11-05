@@ -6,7 +6,10 @@ export const MODULE = 'lore-master';
 
 export const DEFAULTS = {
     interceptImport: true,       // World Info "Import" opens JanitorAI files here
-    replaceWorldInfo: true,      // the top-bar World Info button (and card/chat lore buttons) open Lore Master
+    // Off (default): SillyTavern's own World Info buttons keep opening ST's panel, and Lore Master
+    // opens only from its own entry points. On: those buttons open Lore Master instead.
+    replaceWorldInfo: false,     // the top-bar World Info button (and card/chat lore buttons) open Lore Master
+    stPanelButton: true,         // a small "open in Lore Master" button inside ST's World Info panel
     launcher: true,              // floating button
     launcherPos: { x: 1, y: 0.62, edge: 'right' },
     topbar: false,               // icon in the top bar (off: the World Info button already opens Lore Master)
@@ -26,9 +29,21 @@ export const DEFAULTS = {
     warnBigBooks: true,
 };
 
+/** Bumped when a default changes in a way existing installs should pick up once. */
+const PREFS_VERSION = 2;
+/** Set when this load moved an existing install to the new default, so the UI can say so once. */
+export const migrated = { replaceWorldInfo: false };
+
 export function settings() {
     const all = SillyTavern.getContext().extensionSettings;
     const cur = all[MODULE] ?? {};
+    // v2: replacing ST's World Info buttons is now opt-in. Older installs saved the old default
+    // (true) without anyone choosing it, so move them to the new default once.
+    if (Object.keys(cur).length && !(Number(cur.prefsVersion) >= 2)) {
+        if (cur.replaceWorldInfo) migrated.replaceWorldInfo = true;
+        cur.replaceWorldInfo = false;
+    }
+    cur.prefsVersion = PREFS_VERSION;
     all[MODULE] = Object.assign({}, structuredClone(DEFAULTS), cur);
     if (!all[MODULE].caps || typeof all[MODULE].caps !== 'object') all[MODULE].caps = {};
     if (!all[MODULE].launcherPos || typeof all[MODULE].launcherPos !== 'object') all[MODULE].launcherPos = { ...DEFAULTS.launcherPos };
