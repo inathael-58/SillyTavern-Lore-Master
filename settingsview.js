@@ -92,7 +92,7 @@ function globalRow(def) {
     const max = Math.min(def.max, def.id === 'world_info_budget_cap' ? 8192 : def.id === 'world_info_depth' ? 50 : def.max);
     return `<div class="lm_setrow lm_setcol lm_rangeset">
       <div class="lm_rangehead"><b>${esc(def.label)}</b>
-        <label class="lm_valbox"><input type="number" min="${def.min}" max="${def.max}" value="${v}" data-act="s-global" data-id="${def.id}" inputmode="numeric" aria-label="${esc(def.label)}">${def.unit ? `<span>${def.unit}</span>` : ''}</label></div>
+        <label class="lm_valbox"><input type="number" style="--w:${String(def.max).length}" min="${def.min}" max="${def.max}" value="${v}" data-act="s-global" data-id="${def.id}" inputmode="numeric" aria-label="${esc(def.label)}">${def.unit ? `<span>${def.unit}</span>` : ''}</label></div>
       ${rangeHtml(`data-act="s-global" data-id="${def.id}" aria-label="${esc(def.label)}"`, v, def.min, max)}
       <small>${esc(def.help)}</small></div>`;
 }

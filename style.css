@@ -605,52 +605,71 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_used { flex: none; font-size: 11.5px; color: var(--lm-dim); white-space: nowrap; }
 #lm_root .lm_srcname { padding: 10px 4px; }
 
-/* sliders: thin track, gradient fill like the progress bar (0.5.1) */
+/* sliders: thin track, gradient fill like the progress bar (0.5.1).
+ * Everything here is !important: themes style input[type=range] and input[type=number] with !important
+ * (a fat pill box, a ringed thumb, a white field with no padding), and !important beats any specificity
+ * that lacks it. With both sides !important, the #lm_root id wins. */
 #lm_root .lm_range {
-    -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 24px;
-    margin: 0; padding: 0; border: 0; outline: none; box-shadow: none; background: transparent; cursor: pointer;
-    accent-color: var(--lm-accent);
+    -webkit-appearance: none !important; appearance: none !important; display: block !important;
+    width: 100% !important; height: 24px !important; min-height: 0 !important; max-height: none !important;
+    margin: 0 !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important;
+    outline: none !important; box-shadow: none !important; filter: none !important; opacity: 1 !important;
+    background: transparent !important; cursor: pointer; accent-color: var(--lm-accent);
 }
 #lm_root .lm_range::-webkit-slider-runnable-track {
-    height: 6px; border: 0; border-radius: 3px; box-shadow: none;
-    background: var(--lm-grad) 0 0 / calc(9px + (100% - 18px) * var(--t, 0)) 100% no-repeat, var(--lm-track);
+    -webkit-appearance: none !important; height: 6px !important; margin: 0 !important; padding: 0 !important;
+    border: 0 !important; border-radius: 3px !important; box-shadow: none !important;
+    background: var(--lm-grad) 0 0 / calc(9px + (100% - 18px) * var(--t, 0)) 100% no-repeat, var(--lm-track) !important;
 }
 #lm_root .lm_range::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none; width: 18px; height: 18px; margin-top: -6px;
-    border: 0; border-radius: 50%; background: #fff;
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.3);
+    -webkit-appearance: none !important; appearance: none !important;
+    width: 18px !important; height: 18px !important; margin-top: -6px !important;
+    border: 0 !important; border-radius: 50% !important; background: #fff !important;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.3) !important;
     transition: box-shadow 0.15s, scale 0.15s;
 }
 #lm_root .lm_range:hover::-webkit-slider-thumb,
-#lm_root .lm_range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--lm-accent) 22%, transparent), 0 2px 6px rgba(0, 0, 0, 0.3); }
-#lm_root .lm_range:active::-webkit-slider-thumb { scale: 1.12; box-shadow: 0 0 0 6px color-mix(in srgb, var(--lm-accent) 28%, transparent), 0 2px 6px rgba(0, 0, 0, 0.3); }
-#lm_root .lm_range::-moz-range-track { height: 6px; border: 0; border-radius: 3px; background: var(--lm-track); }
-#lm_root .lm_range::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--lm-grad); }
+#lm_root .lm_range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--lm-accent) 22%, transparent), 0 2px 6px rgba(0, 0, 0, 0.3) !important; }
+#lm_root .lm_range:active::-webkit-slider-thumb { scale: 1.12; box-shadow: 0 0 0 6px color-mix(in srgb, var(--lm-accent) 28%, transparent), 0 2px 6px rgba(0, 0, 0, 0.3) !important; }
+#lm_root .lm_range::-moz-range-track { height: 6px !important; border: 0 !important; border-radius: 3px !important; box-shadow: none !important; background: var(--lm-track) !important; }
+#lm_root .lm_range::-moz-range-progress { height: 6px !important; border-radius: 3px !important; background: var(--lm-grad) !important; }
 #lm_root .lm_range::-moz-range-thumb {
-    width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff;
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.3); transition: box-shadow 0.15s;
+    width: 18px !important; height: 18px !important; border: 0 !important; border-radius: 50% !important; background: #fff !important;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 6px rgba(0, 0, 0, 0.3) !important; transition: box-shadow 0.15s;
 }
 #lm_root .lm_range:hover::-moz-range-thumb,
-#lm_root .lm_range:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--lm-accent) 22%, transparent), 0 2px 6px rgba(0, 0, 0, 0.3); }
+#lm_root .lm_range:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--lm-accent) 22%, transparent), 0 2px 6px rgba(0, 0, 0, 0.3) !important; }
 
-/* a slider setting: label and value on one line, slider under, help last */
-#lm_root .lm_rangeset { gap: 2px; }
+/* a slider setting: label and value on one line, slider under, help last.
+ * The pill is the field; the number input inside it is bare. */
+#lm_root .lm_rangeset { gap: 4px; }
 #lm_root .lm_rangehead { display: flex; align-items: center; gap: 10px; }
 #lm_root .lm_rangehead b { flex: 1; min-width: 0; }
 #lm_root .lm_valbox, #lm_root .lm_valpill {
-    flex: none; display: inline-flex; align-items: center; gap: 2px; height: 28px; padding: 0 9px;
-    border-radius: 8px; border: 1px solid transparent; cursor: text;
-    background: color-mix(in srgb, var(--lm-accent) 13%, transparent); color: var(--lm-fg);
+    flex: none; display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px;
+    height: 32px; min-width: 64px; margin: 0; padding: 0 12px; box-sizing: border-box;
+    border-radius: 9px; border: 1px solid var(--lm-border); cursor: text;
+    background: var(--lm-surface2); color: var(--lm-fg);
     font-weight: 700; font-variant-numeric: tabular-nums;
     transition: border-color 0.15s, box-shadow 0.15s;
 }
-#lm_root .lm_valpill { cursor: default; min-width: 52px; justify-content: center; font-size: 14px; }
+#lm_root .lm_valpill { cursor: default; justify-content: center; font-size: 14px; border-color: transparent; background: color-mix(in srgb, var(--lm-accent) 13%, var(--lm-surface2)); }
 #lm_root .lm_valbox:focus-within { border-color: var(--lm-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--lm-accent) 22%, transparent); }
-#lm_root .lm_valbox input {
-    width: 5.2ch; min-width: 0; height: 26px; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 0; outline: none; box-shadow: none;
-    background: none; color: inherit; font: inherit; font-size: 16px; /* 16px keeps iOS from zooming in */
-    text-align: right; -moz-appearance: textfield; appearance: textfield;
+#lm_root .lm_valbox input,
+#lm_root .lm_valbox input:focus {
+    -webkit-appearance: none !important; -moz-appearance: textfield !important; appearance: textfield !important;
+    display: block !important; flex: none !important;
+    width: calc(var(--w, 4) * 1ch + 2px) !important; min-width: 0 !important; max-width: none !important;
+    height: 30px !important; min-height: 0 !important; line-height: 30px !important;
+    margin: 0 !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important;
+    outline: none !important; box-shadow: none !important; background: transparent !important;
+    color: inherit !important; font: inherit !important; font-size: 16px !important; /* 16px keeps iOS from zooming in */
+    text-align: right !important; text-shadow: none !important;
 }
-#lm_root .lm_valbox input::-webkit-inner-spin-button, #lm_root .lm_valbox input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+#lm_root .lm_valbox input::-webkit-inner-spin-button, #lm_root .lm_valbox input::-webkit-outer-spin-button { -webkit-appearance: none !important; margin: 0 !important; }
 #lm_root .lm_valbox span { font-size: 12.5px; font-weight: 600; color: var(--lm-dim); }
 #lm_root .lm_rangeset > small { margin-top: 0; }
+/* themes zero the padding of every field with !important; keep text off the edges */
+#lm_root input.lm_input, #lm_root select.lm_input, #lm_root textarea.lm_input { padding-left: 11px !important; padding-right: 11px !important; }
+#lm_root input.lm_num { padding-left: 8px !important; padding-right: 8px !important; }
+#lm_root .lm_search input.lm_input { padding-left: 40px !important; }
