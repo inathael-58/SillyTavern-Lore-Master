@@ -25,8 +25,25 @@ export function rangeT(v, min, max) {
 export function paintRange(el) {
     if (el?.type === 'range') el.style.setProperty('--t', rangeT(el.value, el.min || 0, el.max || 100));
 }
+/** Inline for the same reason as BARE below: a heavy theme field rule must not paint a box around the slider. */
+const BARE_RANGE = ['-webkit-appearance:none', 'appearance:none', 'display:block', 'width:100%', 'height:24px', 'min-height:0',
+    'margin:0', 'padding:0', 'border:0', 'border-radius:0', 'outline:none', 'box-shadow:none', 'background:transparent', 'filter:none']
+    .map(d => `${d}!important`).join(';');
 export function rangeHtml(attrs, v, min, max) {
-    return `<input type="range" class="lm_range" min="${min}" max="${max}" value="${v}" style="--t:${rangeT(v, min, max)}" ${attrs}>`;
+    return `<input type="range" class="lm_range" min="${min}" max="${max}" value="${v}" style="--t:${rangeT(v, min, max)};${BARE_RANGE}" ${attrs}>`;
+}
+
+/**
+ * A bare number field that sits inside a styled pill (.lm_valbox). Its look is written inline with !important:
+ * themes style every input with !important behind selectors like input:not(#send_textarea), and each :not(#id)
+ * outweighs our #lm_root rules. Inline !important beats any stylesheet.
+ */
+const BARE = ['-webkit-appearance:none', 'appearance:none', 'display:block', 'flex:none', 'box-sizing:content-box',
+    'margin:0', 'padding:0', 'border:0', 'border-radius:0', 'outline:none', 'box-shadow:none', 'background:transparent',
+    'filter:none', 'text-shadow:none', 'min-width:0', 'max-width:none', 'min-height:0', 'height:30px', 'line-height:30px',
+    'color:inherit', 'font:inherit', 'font-size:16px', 'text-align:right'].map(d => `${d}!important`).join(';');
+export function valboxInput(attrs, v, min, max) {
+    return `<input type="number" min="${min}" max="${max}" value="${v}" inputmode="numeric" ${attrs} style="${BARE};width:calc(${String(max).length}ch + 2px)!important">`;
 }
 
 export function switchHtml(attrs, checked, label = '') {
