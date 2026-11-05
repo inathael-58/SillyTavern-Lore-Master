@@ -27,6 +27,8 @@ export const DEFAULTS = {
     guardMaxEntries: 40,
     guardMaxTokens: 25000,
     warnBigBooks: true,
+    entryView: 'card',           // book screen: card | row (one line per entry)
+    groupBy: 'title',            // book screen: title (sections from "[NPC] Cody"-style prefixes) | none
 };
 
 /** Bumped when a default changes in a way existing installs should pick up once. */
