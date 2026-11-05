@@ -307,6 +307,7 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_sec { padding: 14px; }
 #lm_root .lm_seg { display: grid; gap: 3px; padding: 3px; border-radius: 11px; background: var(--lm-surface2); }
 #lm_root .lm_seg3 { grid-template-columns: repeat(3, 1fr); }
+#lm_root .lm_seg2 { grid-template-columns: repeat(2, 1fr); }
 #lm_root .lm_segbtn {
     min-height: 34px; border: 0; border-radius: 8px; background: none; cursor: pointer; font-size: 13.5px;
     display: inline-flex; gap: 6px; align-items: center; justify-content: center; font-weight: 600; color: var(--lm-dim);
@@ -396,6 +397,7 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 
 /* ---------------------------------------------------------------- settings */
 #lm_root .lm_settings { padding: 2px 12px; }
+#lm_root .lm_settings > .lm_seg { margin: 10px 0 2px; }
 #lm_root .lm_setrow { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--lm-soft); }
 #lm_root .lm_setrow:last-child { border-bottom: 0; }
 #lm_root .lm_setrow b { display: block; font-size: 14px; font-weight: 650; }

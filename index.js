@@ -1,14 +1,16 @@
 /*
  * Lore Master — SillyTavern extension
  *
- * A mobile-first replacement for SillyTavern's World Info panel:
+ * A mobile-first lorebook manager next to SillyTavern's World Info panel (or, if chosen in
+ * Settings, in place of it):
  *   • Books: every lorebook, what is in use right now, one book's entries, a full entry editor
  *   • ตรวจ & รวม: import books from other sites (JanitorAI…), merge books, find and fix
  *     what makes them misfire, test, save (v0.1)
  *   • Settings: ST's global World Info settings in plain Thai, entry points, per-turn caps
  *
- * Entry points (like Chat Browser): floating button, top-bar icon, the World Info button itself,
- * the card's globe button and Chat Lore button, the wand menu, /lore, a button inside ST's panel.
+ * Entry points (like Chat Browser): floating button, top-bar icon, the wand menu, /lore, a button
+ * inside ST's panel, links from Lore Lens (LoreMaster.openEntry). Only when "replace World Info" is
+ * switched on (off by default): the World Info button itself, the card's globe and Chat Lore buttons.
  *
  * Files: lib.js (pure logic) · store.js (SillyTavern data) · ui.js (toolkit, navigation)
  *        editor.js · doctor.js · settingsview.js (screens) · prefs.js (settings)
@@ -19,14 +21,14 @@ import {
     keyScanner, wouldFire, trimToLimits, byPriority, estTokens, bookStats,
 } from './lib.js';
 import * as St from './store.js';
-import { settings, save } from './prefs.js';
+import { settings, save, migrated } from './prefs.js';
 import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast, paintRange } from './ui.js';
 import { viewLibrary, viewBook, viewEntry, enterBook, hooks, onFieldEvent, onFocusOut, onToggleDetails, focusAfterRender, autosize } from './editor.js';
 import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, onDoctorToggle } from './doctor.js';
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.5.1'; // keep in sync with manifest.json
+const VERSION = '0.6.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'settingsview.js', 'style.css', 'manifest.json'];
@@ -300,7 +302,9 @@ function renderWand() {
 }
 
 function renderWiButton() {
-    if (document.getElementById('lm_wi_btn')) return;
+    const old = document.getElementById('lm_wi_btn');
+    if (!settings().stPanelButton) { old?.remove(); return; }
+    if (old) return;
     const anchor = document.getElementById('world_import_button');
     if (!anchor) return;
     const b = document.createElement('div');
@@ -318,6 +322,25 @@ function renderWiButton() {
 
 function refreshEntryPoints() { renderLauncher(); renderTopbar(); renderWand(); renderWiButton(); }
 shell.refreshEntryPoints = refreshEntryPoints;
+
+/**
+ * Open one entry of one book (used by Lore Lens's "open in lorebook" links).
+ * Resolves false when the book does not exist, so the caller can fall back to ST's own panel.
+ */
+async function openEntry(name, uid) {
+    name = String(name ?? '');
+    if (!name || !St.bookNames().includes(name)) return false;
+    const id = Number(uid);
+    await enterBook(name);
+    closeStWorldInfo();
+    if (!Number.isFinite(id) || !St.getEntry(id)) {
+        openLM([{ v: 'book', name }]);
+        toast.info(`ไม่เจอเอนทรี uid ${uid} ใน “${name}” (อาจถูกลบไปแล้ว) เปิดเล่มให้แทน`, 'Lore Master');
+        return true;
+    }
+    openLM([{ v: 'book', name }, { v: 'entry', name, uid: id }]);
+    return true;
+}
 
 /** Open where it makes most sense: keep the last screen if it was used recently, else the library. */
 function openFromContext() {
@@ -574,7 +597,7 @@ function mountSettings() {
           <div class="menu_button" data-lm-reload title="ดึงไฟล์ของ Lore Master จากเซิร์ฟเวอร์ใหม่ทั้งหมดแล้วโหลดหน้าใหม่"><i class="fa-solid fa-rotate"></i> โหลดเวอร์ชันล่าสุด</div>
         </div>
         <div class="lm_verline">ที่รันอยู่: <b>v${VERSION}</b> <span data-lm-remote></span></div>
-        <small>จัดการ lorebook แทนหน้า World Info ของ ST · ตั้งค่าทางเข้าได้ในหน้า ตั้งค่า ของ Lore Master · พิมพ์ <code>/lore</code></small>
+        <small>จัดการ lorebook คู่กับหน้า World Info ของ ST (จะให้ใช้แทนเลยก็ได้ ตั้งในหน้า ตั้งค่า ของ Lore Master) · พิมพ์ <code>/lore</code></small>
       </div>
     </div>`;
     host.appendChild(div);
@@ -669,6 +692,11 @@ function registerCommands() {
 
 (function init() {
     settings();
+    if (migrated.replaceWorldInfo) {
+        save();
+        setTimeout(() => toast.info('ตั้งแต่ v0.6 ปุ่ม World Info ปุ่มลูกโลก และ Chat Lore ของ ST เปิดหน้าเดิมของ ST ตามปกติ เปิด Lore Master ได้จากปุ่มลอย เมนูไม้กายสิทธิ์ หรือ /lore<br>ถ้าอยากให้ปุ่มของ ST เปิด Lore Master แทนเหมือนเดิม แตะที่นี่แล้วเลือก “ใช้แทน”',
+            'Lore Master', { timeOut: 20000, extendedTimeOut: 8000, closeButton: true, escapeHtml: false, onclick: () => openLM(null, 'settings') }), 2500);
+    }
     initDoctor();
     mountSettings();
     refreshEntryPoints();
@@ -696,7 +724,7 @@ function registerCommands() {
     // keep the extra launchers alive if the theme / UI rebuilds those parts
     setTimeout(() => checkForNewVersion(), 3000);
     if (E.CHAT_CHANGED) eventSource.on(E.CHAT_CHANGED, () => checkForNewVersion());
-    setInterval(() => { if (!document.getElementById('lm_wand') && settings().wand) renderWand(); if (!document.getElementById('lm_wi_btn')) renderWiButton(); }, 4000);
-    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), version: VERSION, lastCut: () => lastCut, lastTrip: () => lastTrip, glossary: () => glossLines, remote: () => remoteVersion, isStale: () => !!remoteVersion && newer(remoteVersion, VERSION), status: () => ({ ...status, events: { before: !!E.WORLDINFO_ENTRIES_LOADED, after: !!E.WORLDINFO_SCAN_DONE } }) };
+    setInterval(() => { if (!document.getElementById('lm_wand') && settings().wand) renderWand(); if (!document.getElementById('lm_wi_btn') && settings().stPanelButton) renderWiButton(); }, 4000);
+    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), openEntry, version: VERSION, lastCut: () => lastCut, lastTrip: () => lastTrip, glossary: () => glossLines, remote: () => remoteVersion, isStale: () => !!remoteVersion && newer(remoteVersion, VERSION), status: () => ({ ...status, events: { before: !!E.WORLDINFO_ENTRIES_LOADED, after: !!E.WORLDINFO_SCAN_DONE } }) };
     console.log(LOG, `v${VERSION} ready`);
 })();
