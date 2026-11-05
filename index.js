@@ -28,7 +28,7 @@ import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor,
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.7.0'; // keep in sync with manifest.json
+const VERSION = '0.7.1'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'settingsview.js', 'style.css', 'manifest.json'];
