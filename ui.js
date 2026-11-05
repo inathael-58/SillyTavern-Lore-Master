@@ -16,6 +16,19 @@ export const shell = { render: () => {}, root: null };
 
 export const icon = (name, extra = '') => `<i class="fa-solid ${name} ${extra}" aria-hidden="true"></i>`;
 
+/** Slider fill: 0..1 of the way along, read by the CSS gradient track. */
+export function rangeT(v, min, max) {
+    const t = (Number(v) - Number(min)) / ((Number(max) - Number(min)) || 1);
+    return Math.max(0, Math.min(1, t)).toFixed(4);
+}
+/** Repaint a slider's fill after its value changed. */
+export function paintRange(el) {
+    if (el?.type === 'range') el.style.setProperty('--t', rangeT(el.value, el.min || 0, el.max || 100));
+}
+export function rangeHtml(attrs, v, min, max) {
+    return `<input type="range" class="lm_range" min="${min}" max="${max}" value="${v}" style="--t:${rangeT(v, min, max)}" ${attrs}>`;
+}
+
 export function switchHtml(attrs, checked, label = '') {
     return `<label class="lm_switch" ${label ? `title="${esc(label)}"` : ''}><input type="checkbox" ${attrs} ${checked ? 'checked' : ''}><span class="lm_knob"></span>${label ? `<span class="lm_sr">${esc(label)}</span>` : ''}</label>`;
 }
