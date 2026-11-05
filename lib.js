@@ -156,7 +156,7 @@ Rules:
 - 4 to 12 categories, each 1-3 words, about the kind of thing an entry describes (for example: characters, places, organisations or teams, items, events, history, relationships, rules of the world, writing instructions). Pick what this book actually contains. Split a big kind (for example many characters) only where it splits naturally (by team, family, faction).
 - Every entry must fit one category. Avoid a catch-all; if one is needed, keep it small.
 - Category names in ${ORG_LANG[lang] ?? 'Thai'}.
-Answer with JSON only: {"categories":[{"name":"...","about":"one short line: what goes here"}]}`;
+Keep any thinking brief. Answer with JSON only: {"categories":[{"name":"...","about":"one short line: what goes here"}]}`;
 
 export function organizePlanRequest(entries) {
     return `Entries (id | title | keywords):\n${entries.map(e => `${e.uid} | ${oneLine(e.comment, 80) || '(no title)'} | ${(e.key ?? []).slice(0, 3).map(k => oneLine(k, 30)).join(', ')}`).join('\n')}`;
@@ -183,7 +183,7 @@ Title rules:
 - Several entries about one subject: "Subject – aspect" with an en dash, for example "Cody – Childhood".
 - If the title is already short and clear, return it unchanged. If it is empty or meaningless, name it from the text.
 - English titles in Title Case.
-Answer with JSON only: {"entries":[[id,"category","title"], ...]} with one item for every id you were given.`;
+Keep any thinking brief. Answer with JSON only: {"entries":[[id,"category","title"], ...]} with one item for every id you were given.`;
 
 export function organizeRequest(entries) {
     return `Entries (id | title | keywords | start of text):\n${entries.map(e => `${e.uid} | ${oneLine(e.comment, 100) || '(no title)'} | ${(e.key ?? []).slice(0, 4).map(k => oneLine(k, 30)).join(', ')} | ${oneLine(e.content, 160)}`).join('\n')}`;
