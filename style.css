@@ -608,7 +608,8 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 /* sliders: thin track, gradient fill like the progress bar (0.5.1).
  * Everything here is !important: themes style input[type=range] and input[type=number] with !important
  * (a fat pill box, a ringed thumb, a white field with no padding), and !important beats any specificity
- * that lacks it. With both sides !important, the #lm_root id wins. */
+ * that lacks it. With both sides !important the heavier selector wins, and theme field rules such as
+ * input:not(#send_textarea) carry ids too, so the boxes themselves are also set inline (ui.js: rangeHtml, valboxInput). */
 #lm_root .lm_range {
     -webkit-appearance: none !important; appearance: none !important; display: block !important;
     width: 100% !important; height: 24px !important; min-height: 0 !important; max-height: none !important;
