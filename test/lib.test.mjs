@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    detectFormat, readLorebook, mergeBooks, toWorld, cleanKeys, titleParts, splitCategory, categorize, keyMatches, firingKey,
+    detectFormat, readLorebook, mergeBooks, toWorld, cleanKeys, titleParts, splitCategory, categorize, CATEGORY_KEY, parseOrganizePlan, parseOrganizeReply, organizeRequest, keyMatches, firingKey,
     simulate, diagnose, applyChanges, overCap, estTokens, LOGIC, POSITION,
     entryStatus, entriesOf, freeUid, newEntry, keyWarnings, entryWarnings, entryMatches, positionShort, bookStats, SORTS,
     parseJsonLoose, properNames, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
@@ -545,4 +545,25 @@ test('categorize takes long bracketed book names and one level below them', () =
     assert.equal(m.get(3).cat, `${book} › NPC`);
     assert.equal(m.get(3).rest, 'Coach');
     assert.equal(m.has(5), false);
+});
+
+test('categorize uses a stored category even for a single entry', () => {
+    const m = categorize([
+        { uid: 1, comment: 'Cody – Childhood', extensions: { [CATEGORY_KEY]: 'ตัวละคร' } },
+        { uid: 2, comment: 'Cody – Looks', extensions: { [CATEGORY_KEY]: 'ตัวละคร' } },
+        { uid: 3, comment: 'Arena', extensions: { [CATEGORY_KEY]: 'สถานที่' } },
+    ]);
+    assert.equal(m.get(3).cat, 'สถานที่');
+    assert.equal(m.get(1).cat, 'ตัวละคร › Cody');
+    assert.equal(m.get(1).rest, 'Childhood');
+});
+
+test('organiser replies are parsed and checked', () => {
+    assert.deepEqual(parseOrganizePlan('ok {"categories":[{"name":"ตัวละคร","about":"x"},"สถานที่",{"name":"ตัวละคร"}]}').map(c => c.name), ['ตัวละคร', 'สถานที่']);
+    assert.throws(() => parseOrganizePlan('{"categories":[]}'));
+    const r = parseOrganizeReply('```json\n{"entries":[[1,"ทีม","Northpoint Bears"],["2","ทีม","EMC"],[9,"x","y"]]}\n```', [1, 2]);
+    assert.deepEqual([...r.keys()], ['1', '2']);
+    assert.equal(r.get('2').name, 'EMC');
+    assert.throws(() => parseOrganizeReply('{"entries":[[1,"a","b"]]}', [1, 2, 3]));
+    assert.match(organizeRequest([{ uid: 7, comment: '[Book] X', key: ['a', 'b'], content: 'Long\ntext' }]), /^Entries .*\n7 \| \[Book\] X \| a, b \| Long text$/);
 });

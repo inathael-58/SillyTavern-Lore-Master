@@ -110,13 +110,31 @@ function shared(items, min) {
     return out;
 }
 
+/** Where the AI organiser (or the person) stores an entry's category, so titles can stay clean. */
+export const CATEGORY_KEY = 'lore_master_category';
+export function entryCategory(e) {
+    const c = e?.extensions?.[CATEGORY_KEY];
+    return typeof c === 'string' && c.trim() ? c.trim() : '';
+}
+
 /**
- * Category of each entry whose title prefix is shared by at least `min` entries (case-insensitive),
- * as Map(uid → { cat, rest }). A prefix used once is just part of a name, not a category.
+ * Category of each entry, as Map(uid → { cat, rest }):
+ *  - a stored category (CATEGORY_KEY) always counts;
+ *  - otherwise a title prefix shared by at least `min` entries (case-insensitive).
+ *    A prefix used once is just part of a name, not a category.
  * One level deeper when the rest has its own shared prefix: "[Book] NPC: Cody" → "Book › NPC", "Cody".
  */
 export function categorize(entries, min = 2) {
-    const top = shared(entries.map(e => ({ uid: e.uid, title: e.comment })), min);
+    const fixed = new Map();
+    const free = [];
+    for (const e of entries) {
+        const c = entryCategory(e);
+        if (!c) { free.push(e); continue; }
+        const sp = splitCategory(e.comment);
+        fixed.set(e.uid, { cat: c, rest: sp && sp.cat.toLowerCase() === c.toLowerCase() ? sp.rest : String(e.comment ?? '') });
+    }
+    const top = shared(free.map(e => ({ uid: e.uid, title: e.comment })), min);
+    for (const [uid, c] of fixed) top.set(uid, c);
     const byCat = new Map();
     for (const [uid, c] of top) {
         if (!byCat.has(c.cat)) byCat.set(c.cat, []);
@@ -126,6 +144,65 @@ export function categorize(entries, min = 2) {
         for (const [uid, c] of shared(items, min)) top.set(uid, { cat: `${cat} › ${c.cat}`, rest: c.rest });
     }
     return top;
+}
+
+// ---------------------------------------------------------------- AI organiser: categories and tidy titles
+
+const ORG_LANG = { th: 'Thai', en: 'English' };
+const oneLine = (t, n) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+export const organizePlanSystem = lang => `You organise a roleplay lorebook (SillyTavern World Info) so a person can browse hundreds of entries on a phone. You get every entry's id, title and first keywords. Choose the categories.
+Rules:
+- 4 to 12 categories, each 1-3 words, about the kind of thing an entry describes (for example: characters, places, organisations or teams, items, events, history, relationships, rules of the world, writing instructions). Pick what this book actually contains. Split a big kind (for example many characters) only where it splits naturally (by team, family, faction).
+- Every entry must fit one category. Avoid a catch-all; if one is needed, keep it small.
+- Category names in ${ORG_LANG[lang] ?? 'Thai'}.
+Answer with JSON only: {"categories":[{"name":"...","about":"one short line: what goes here"}]}`;
+
+export function organizePlanRequest(entries) {
+    return `Entries (id | title | keywords):\n${entries.map(e => `${e.uid} | ${oneLine(e.comment, 80) || '(no title)'} | ${(e.key ?? []).slice(0, 3).map(k => oneLine(k, 30)).join(', ')}`).join('\n')}`;
+}
+
+export function parseOrganizePlan(text) {
+    const j = parseJsonLoose(text);
+    const cats = (Array.isArray(j?.categories) ? j.categories : [])
+        .map(c => (typeof c === 'string' ? { name: c, about: '' } : { name: oneLine(c?.name, 40), about: oneLine(c?.about, 120) }))
+        .filter(c => c.name);
+    const seen = new Set();
+    const out = cats.filter(c => !seen.has(c.name.toLowerCase()) && seen.add(c.name.toLowerCase()));
+    if (out.length < 2) throw new Error('AI ไม่ได้ให้รายชื่อหมวดมา');
+    return out.slice(0, 16);
+}
+
+export const organizeSystem = (lang, cats) => `You sort roleplay lorebook entries into categories and give each entry a short, tidy title.
+Categories (use these names exactly; add a new one only if an entry fits none, named in ${ORG_LANG[lang] ?? 'Thai'}):
+${cats.map(c => `- ${c.name}${c.about ? `: ${c.about}` : ''}`).join('\n')}
+Title rules:
+- 1-6 words, at most 40 characters: the name of the person, place or thing the entry is about. Not a sentence.
+- Keep the language and spelling the entry uses for names. Never translate a proper noun.
+- Drop book or file names in brackets, things like "_SillyTavern", "Lorebook", ".json", "v2", underscores (use spaces), emoji, numbering like "01.", and the category word itself (the category is shown separately).
+- Several entries about one subject: "Subject – aspect" with an en dash, for example "Cody – Childhood".
+- If the title is already short and clear, return it unchanged. If it is empty or meaningless, name it from the text.
+- English titles in Title Case.
+Answer with JSON only: {"entries":[[id,"category","title"], ...]} with one item for every id you were given.`;
+
+export function organizeRequest(entries) {
+    return `Entries (id | title | keywords | start of text):\n${entries.map(e => `${e.uid} | ${oneLine(e.comment, 100) || '(no title)'} | ${(e.key ?? []).slice(0, 4).map(k => oneLine(k, 30)).join(', ')} | ${oneLine(e.content, 160)}`).join('\n')}`;
+}
+
+/** Map(String(uid) → { cat, name }). Throws when the answer covers too few of the ids (the next API is tried). */
+export function parseOrganizeReply(text, ids) {
+    const j = parseJsonLoose(text);
+    const want = new Set([...ids].map(String));
+    const out = new Map();
+    for (const it of Array.isArray(j?.entries) ? j.entries : []) {
+        const [id, cat, name] = Array.isArray(it) ? it : [it?.id, it?.category ?? it?.cat, it?.title ?? it?.name];
+        const k = String(id);
+        const c = oneLine(cat, 40);
+        if (!want.has(k) || !c) continue;
+        out.set(k, { cat: c, name: oneLine(name, 60) });
+    }
+    if (out.size < Math.ceil(want.size * 0.7)) throw new Error(`AI ตอบมาแค่ ${out.size} จาก ${want.size} เอนทรี`);
+    return out;
 }
 
 /** Main name of an entry, normalised for comparing. */

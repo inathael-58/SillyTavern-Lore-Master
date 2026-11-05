@@ -119,10 +119,12 @@ async function bookMenu(name) {
             { value: 'dup', label: 'ทำสำเนา', icon: 'fa-clone' },
             { value: 'merge', label: 'รวมกับเล่มอื่น…', icon: 'fa-object-group' },
             '-',
+            { value: 'organize', label: 'ให้ AI จัดหมวดและเก็บชื่อ', icon: 'fa-folder-tree', hint: 'แบ่งหมวดตามเนื้อหา ตั้งชื่อให้สั้นและเป็นระเบียบ ดูก่อนบันทึก' },
             { value: 'thai', label: 'ให้ AI คิดคีย์ไทยทั้งเล่ม', icon: 'fa-language', hint: 'ตรวจและเลือกก่อนเพิ่ม' },
             { value: 'condense', label: 'ให้ AI ย่อเอนทรีที่ยาว', icon: 'fa-compress', hint: 'ตัดคำบรรยายฟุ่มเฟือย เก็บข้อเท็จจริงไว้' },
             { value: 'gloss', label: 'สร้าง / อัปเดตอภิธานชื่อ', icon: 'fa-spell-check', hint: 'ชื่ออังกฤษ = ตัวสะกดไทย จากคีย์ไทยที่มี' },
             { value: 'export', label: 'ดาวน์โหลด .json', icon: 'fa-download' },
+            { value: 'restore', label: 'กู้คืนจากสำรอง…', icon: 'fa-clock-rotate-left', hint: 'ฉบับที่สำรองไว้ก่อนตรวจ & รวม หรือก่อนจัดหมวด (10 ฉบับล่าสุด)' },
             '-',
             { value: 'delete', label: 'ลบเล่มนี้', icon: 'fa-trash', danger: true },
         ],
@@ -145,6 +147,7 @@ async function bookMenu(name) {
         }
         if (v === 'dup') { const nn = await St.duplicateBook(name); toast.success(`สร้าง “${nn}” แล้ว`); }
         if (v === 'merge') return hooks.mergeBooks([name]);
+        if (v === 'organize') return push({ v: 'organize', name });
         if (v === 'thai') return hooks.thaiBook(name);
         if (v === 'condense') return hooks.condenseBook(name);
         if (v === 'gloss') {
@@ -152,6 +155,7 @@ async function bookMenu(name) {
             toast.success(n ? `อภิธานชื่อมี ${n} ชื่อ${settings().glossarySmart ? ' · โหมดประหยัดเปิดอยู่: ส่งเฉพาะชื่อที่เกี่ยวในแต่ละเทิร์น' : ''}` : 'ยังไม่มีเอนทรีที่มีคีย์ไทย เลยไม่มีชื่อให้ทำอภิธาน');
         }
         if (v === 'export') { if (St.cur?.name === name) await St.flush(); download(name, await St.WIref.loadWorldInfo(name)); }
+        if (v === 'restore') await restoreBook(name);
         if (v === 'delete') {
             const used = [...use].map(t => USE_TAGS[t][1]);
             const cards = St.cardsUsing(name);
@@ -201,6 +205,26 @@ async function newMenu() {
         input.click();
     }
     if (v === 'merge') hooks.mergeBooks([]);
+}
+
+/** Put back a whole-book backup (taken before Check & Merge saves or the AI organiser). */
+async function restoreBook(name) {
+    const list = await backupList(name).catch(() => []);
+    if (!list.length) { toast.info('ยังไม่มีสำรองของเล่มนี้ในเบราว์เซอร์นี้'); return; }
+    const pick = await sheet({
+        title: `กู้ “${name}” คืน`, sub: 'เลือกฉบับ เล่มตอนนี้จะถูกแทนที่ทั้งเล่ม',
+        items: list.map((b, i) => ({ value: i, label: new Date(b.at).toLocaleString(), hint: `${Object.keys(b.data?.entries ?? {}).length} เอนทรี`, icon: 'fa-clock-rotate-left' })),
+    });
+    if (pick === null || pick === undefined) return;
+    const b = list[pick];
+    if (!await confirmBox({ title: 'กู้คืนฉบับนี้?', text: `${esc(new Date(b.at).toLocaleString())}<br>เล่มตอนนี้จะถูกแทนที่ทั้งเล่ม`, ok: 'กู้คืน', danger: true })) return;
+    if (St.cur?.name === name) await St.flush();
+    await St.WIref.saveWorldInfo(name, structuredClone(b.data), true);
+    St.statCache.delete(name);
+    await St.reloadIfOpen(name);
+    try { St.WIref.reloadEditor?.(name); } catch { /* ignore */ }
+    toast.success(`กู้ “${name}” คืนเป็นฉบับ ${new Date(b.at).toLocaleString()} แล้ว`);
+    shell.render();
 }
 
 // ================================================================ one book
@@ -853,6 +877,8 @@ act('click', {
                 '-',
                 { value: 'open', label: 'กางทุกหมวด', icon: 'fa-angles-down' },
                 { value: 'close', label: 'พับทุกหมวด', icon: 'fa-angles-up' },
+                '-',
+                { value: 'ai', label: 'ให้ AI จัดหมวดและเก็บชื่อ…', hint: 'สำหรับเล่มที่ชื่อเอนทรีไม่มีหมวดนำหน้า', icon: 'fa-folder-tree' },
             ],
         });
         if (!v) return;
@@ -861,6 +887,7 @@ act('click', {
         if (v === 'g-none') s.groupBy = 'none';
         if (v === 'open') { for (const k of drawn.keys()) L.openGroups.add(k); }
         if (v === 'close') L.openGroups.clear();
+        if (v === 'ai') return push({ v: 'organize', name: St.cur?.name });
         save(); shell.render();
     },
     'book-sort': async () => {

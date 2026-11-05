@@ -13,7 +13,7 @@ export function profiles() {
     try { return ctx().ConnectionManagerRequestService?.getSupportedProfiles?.() ?? []; } catch { return []; }
 }
 /** Tasks that can have their own API list (null = use the main list). */
-export const TASKS = { keys: 'คิดคีย์ไทย', condense: 'ย่อเนื้อหา' };
+export const TASKS = { keys: 'คิดคีย์ไทย', condense: 'ย่อเนื้อหา', organize: 'จัดหมวด' };
 
 export function aiSettings() {
     const s = settings();
