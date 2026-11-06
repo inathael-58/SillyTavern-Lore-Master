@@ -7,6 +7,7 @@ import {
     readLorebook, mergeBooks, diagnose, applyChanges, simulate, summarize, toWorld,
     estTokens, FORMAT_LABEL, POSITION, cardFromPng, LONG_TOKENS, THAI, cleanKeys, isGlossary, upsertGlossaryList, glossaryLines,
     keyPlan, NAME_SYSTEM, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, LANG_LABEL, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
+    entryLanguage, wantsTranslation, TRANSLATE_SYSTEM, translateRequest, translateBudget, parseTranslation, applyTranslation,
 } from './lib.js';
 import * as St from './store.js';
 import { settings, save } from './prefs.js';
@@ -41,6 +42,11 @@ const S = {
     cratio: null,
     condensed: null,        // Map uid -> { text, on }
     cexpand: new Set(),
+    tpick: null,            // Set of uids picked for translating (picker open when not null)
+    translated: null,       // Map uid -> { comment, key, keysecondary, content, on }
+    tnames: new Map(),      // original name -> English spelling, shared by every entry of one run
+    texpand: new Set(),
+    tkeep: false,           // keep the original-language keys next to the English ones
 };
 let nextSourceId = 1;
 
@@ -63,7 +69,10 @@ function rebuild() {
     suggestName();
 }
 function rediagnose() { S.issues = S.work.length ? diagnose(S.work, scanOpts()) : []; }
-function resetAi() { S.thai = null; S.thaiPlan = null; S.cpick = null; S.condensed = null; S.cexpand.clear(); }
+function resetAi() {
+    S.thai = null; S.thaiPlan = null; S.cpick = null; S.condensed = null; S.cexpand.clear();
+    S.tpick = null; S.translated = null; S.texpand.clear(); S.tnames = new Map();
+}
 function suggestName() {
     const cc = St.currentChar();
     const stBooks = S.sources.filter(s => s.book);
@@ -119,6 +128,11 @@ export async function thaiBook(name) {
 export async function condenseBook(name) {
     await checkBook(name);
     openCondensePicker();
+    shell.render();
+}
+export async function translateBook(name) {
+    await checkBook(name);
+    openTranslatePicker();
     shell.render();
 }
 export async function importFiles(files) {
@@ -319,6 +333,7 @@ function aiTools() {
     return `
     <h3 class="lm_h">${icon('fa-wand-magic-sparkles')} เครื่องมือ AI</h3>
     ${S.job ? jobCard() : ''}
+    ${translateTool()}
     <section class="lm_card lm_tool">
       <div class="lm_tool_head"><span class="lm_tool_icon">${icon('fa-language')}</span><div class="lm_grow"><b>คีย์ภาษาไทย</b><small>${thaiN ? `${thaiN} เอนทรียังไม่มีคีย์ไทย` : 'ทุกเอนทรีมีคีย์ไทยแล้ว'}</small></div></div>
       ${S.thai ? thaiReview() : S.thaiPlan ? thaiPlanCard() : `
@@ -338,11 +353,12 @@ function aiTools() {
     </section>`;
 }
 
+const JOB_LABEL = { thai: 'กำลังคิดคีย์ไทย', condense: 'กำลังย่อเนื้อหา', translate: 'กำลังแปล' };
 function jobCard() {
     const j = S.job;
     const pct = j.total ? Math.round(j.done / j.total * 100) : 0;
     return `<div class="lm_card lm_job">
-      <div class="lm_row_between"><b><span class="lm_spin lm_spin_sm"></span> ${esc(j.kind === 'thai' ? 'กำลังคิดคีย์ไทย' : 'กำลังย่อเนื้อหา')} ${j.done}/${j.total}</b><button class="lm_btn" data-act="d-stop">${icon('fa-stop')} หยุด</button></div>
+      <div class="lm_row_between"><b><span class="lm_spin lm_spin_sm"></span> ${esc(JOB_LABEL[j.kind] ?? '')} ${j.done}/${j.total}</b><button class="lm_btn" data-act="d-stop">${icon('fa-stop')} หยุด</button></div>
       <div class="lm_bar"><span style="width:${pct}%"></span></div>
       <div class="lm_dim">${esc(j.label || '')}</div>
       ${j.errors.length ? `<div class="lm_warn">${esc(j.errors.slice(-2).join(' · '))}</div>` : ''}
@@ -533,6 +549,132 @@ function condenseReview() {
         <button class="lm_btn lm_primary" data-act="d-capply" ${on.length ? '' : 'disabled'}>${icon('fa-check')} ใช้ ${on.length} เอนทรี (ประหยัด ≈${fmt(saved)} โทเคน)</button>
         <button class="lm_btn" data-act="d-ccancel">ทิ้งทั้งหมด</button>
       </div>`;
+}
+
+// ---------------------------------------------------------------- AI: translate into English
+
+/** Entries written partly or wholly in another script (the glossary entry is Lore Master's own). */
+const translatable = () => S.work.filter(e => !isGlossary(e) && entryLanguage(e));
+const langOf = e => { const l = entryLanguage(e); return l ? LANG_LABEL[l.lang] ?? l.lang : ''; };
+
+function openTranslatePicker() {
+    S.tpick = new Set(S.work.filter(e => !isGlossary(e) && wantsTranslation(e)).map(e => e.uid));
+}
+
+function translateTool() {
+    const want = S.work.filter(e => !isGlossary(e) && wantsTranslation(e));
+    const anyN = translatable().length;
+    const langs = {};
+    for (const e of want) langs[langOf(e)] = (langs[langOf(e)] ?? 0) + 1;
+    const langText = Object.entries(langs).sort((a, b) => b[1] - a[1]).map(([l, n]) => `${l} ${n}`).join(' · ');
+    return `
+    <section class="lm_card lm_tool">
+      <div class="lm_tool_head"><span class="lm_tool_icon">${icon('fa-globe')}</span><div class="lm_grow"><b>แปลเป็นภาษาอังกฤษ</b><small>${want.length ? `${want.length} เอนทรีเป็นภาษาอื่น (${esc(langText)})` : anyN ? 'เกือบทุกเอนทรีเป็นภาษาอังกฤษหรือไทยแล้ว' : 'ทุกเอนทรีเป็นภาษาอังกฤษแล้ว'}</small></div></div>
+      ${S.translated ? translateReview() : S.tpick ? translatePicker() : `
+        <p class="lm_why">สำหรับเล่มที่เขียนเป็นภาษาเกาหลี ญี่ปุ่น จีน ฯลฯ AI แปลชื่อเอนทรี คีย์ และเนื้อหาเป็นภาษาอังกฤษ ครบทุกรายละเอียด ไม่ย่อ ชื่อคนและสถานที่สะกดแบบเดียวกันทั้งเล่ม ดูและแก้ก่อนใช้ได้ทุกตัว</p>
+        <button class="lm_btn lm_primary" data-act="d-tpick" ${anyN && !S.job ? '' : 'disabled'}>${icon('fa-list-check')} เลือกเอนทรีที่จะแปล…</button>
+        ${want.length ? `<div class="lm_hint">${icon('fa-lightbulb')} แปลก่อน แล้วค่อยให้ AI คิดคีย์ไทย จะได้คีย์ไทยจากชื่อภาษาอังกฤษ</div>` : ''}`}
+    </section>`;
+}
+
+function translatePicker() {
+    const list = translatable();
+    return `
+      <div class="lm_dim">ติ๊กไว้ให้แล้วเฉพาะเอนทรีที่เป็นภาษาอื่นเป็นหลัก (ภาษาไทยไม่ติ๊กไว้ให้) · แปลทีละเอนทรี (1 เอนทรี = 1 ครั้ง)</div>
+      <div class="lm_row lm_mini"><button class="lm_link" data-act="d-tpickall" data-v="1">เลือกทั้งหมด</button><button class="lm_link" data-act="d-tpickall" data-v="0">ไม่เลือกเลย</button></div>
+      <div class="lm_pick_list">${list.map(e => `<label class="lm_checkrow"><input type="checkbox" data-act="d-tpickone" data-uid="${e.uid}" ${S.tpick.has(e.uid) ? 'checked' : ''}><span class="lm_grow">${esc(nameOf(e))}</span><small>${esc(langOf(e))}${e.disable ? ' · ปิดอยู่' : ''}</small></label>`).join('') || '<div class="lm_dim">ไม่มีเอนทรีภาษาอื่น</div>'}</div>
+      <div class="lm_dim lm_mt">ใช้ API: ${activeSources('translate').map(sourceLabel).map(esc).join(' → ')} <small>(ตั้งแยกได้ที่ ตั้งค่า → AI → แปล)</small></div>
+      <div class="lm_row lm_wrap lm_mt">
+        <button class="lm_btn lm_primary" data-act="d-translate" ${S.tpick.size && !S.job ? '' : 'disabled'}>${icon('fa-globe')} แปล ${S.tpick.size} เอนทรี</button>
+        <button class="lm_btn" data-act="d-tcancel">ยกเลิก</button>
+      </div>`;
+}
+
+function startTranslate() {
+    const list = S.work.filter(e => S.tpick?.has(e.uid));
+    if (!list.length || S.job) return;
+    S.translated = new Map();
+    S.tpick = null;
+    S.job = { kind: 'translate', done: 0, total: list.length, label: '', abort: new AbortController(), errors: [] };
+    shell.render();
+    (async () => {
+        for (const e of list) {
+            if (S.job.abort.signal.aborted) break;
+            try {
+                const tr = await ask({
+                    task: 'translate', system: TRANSLATE_SYSTEM, user: translateRequest(e, S.tnames), maxTokens: translateBudget(e), signal: S.job.abort.signal,
+                    accept: out => parseTranslation(out, e),
+                    onTry: label => { S.job.label = `${label} · ${nameOf(e)}`; jobUpdate(); },
+                });
+                // later entries spell these names the same way
+                for (const [orig, en] of tr.names) if (!S.tnames.has(orig)) S.tnames.set(orig, en);
+                S.translated.set(e.uid, { comment: tr.comment, key: tr.key, keysecondary: tr.keysecondary, content: tr.content, on: true });
+            } catch (err) {
+                if (S.job.abort.signal.aborted) break;
+                S.job.errors.push(`${nameOf(e)}: ${String(err?.message ?? err).split('\n')[0]}`);
+            }
+            S.job.done++;
+            jobUpdate();
+        }
+        const errs = S.job.errors;
+        S.job = null;
+        if (!S.translated.size) { S.translated = null; toast.error(errs.join('\n') || 'ไม่ได้ผลลัพธ์', 'แปลไม่สำเร็จ'); }
+        else if (errs.length) toast.warning(`แปลไม่ได้ ${errs.length} เอนทรี: ${errs.slice(0, 2).join(' · ')}`);
+        shell.render();
+    })();
+}
+
+function translateReview() {
+    const rows = [...S.translated.entries()].map(([uid, r]) => [S.work.find(e => e.uid === uid), r]).filter(([e]) => e);
+    const on = rows.filter(([, r]) => r.on).length;
+    const names = [...S.tnames];
+    return `
+      <div class="lm_dim">แตะ <b>ดู / แก้</b> เพื่อเทียบกับต้นฉบับและแก้ก่อนใช้ ของเดิมยังอยู่จนกว่าจะกดบันทึก (และกดย้อนได้)</div>
+      ${names.length ? `<details class="lm_tnames"><summary>${icon('fa-spell-check')} ชื่อเฉพาะที่ใช้ทั้งเล่ม (${names.length})</summary>
+        <div class="lm_dim">${names.map(([o, en]) => `${esc(o)} = <b>${esc(en)}</b>`).join(' · ')}</div></details>` : ''}
+      <div class="lm_sugrows">${rows.map(([e, r]) => {
+        const after = applyTranslation(e, r, { keepKeys: S.tkeep });
+        const open = S.texpand.has(e.uid);
+        return `
+        <div class="lm_sugrow">
+          <label class="lm_checkrow lm_inline"><input type="checkbox" data-act="d-ton" data-uid="${e.uid}" ${r.on ? 'checked' : ''}>
+            <span class="lm_grow lm_minw0"><b>${esc(r.comment || nameOf(e))}</b><br><small>${esc(nameOf(e))} · ${esc(langOf(e))} → อังกฤษ · ≈${fmt(estTokens(r.content))} โทเคน</small></span></label>
+          <div class="lm_dim lm_tkeys">คีย์: ${after.key.map(k => `<span>${esc(k)}</span>`).join(' ') || '—'}${after.keysecondary.length ? ` · คีย์รอง: ${after.keysecondary.map(k => `<span>${esc(k)}</span>`).join(' ')}` : ''}</div>
+          <button class="lm_link" data-act="d-texp" data-uid="${e.uid}">${open ? 'ซ่อน' : 'ดู / แก้'}</button>
+          ${open ? `
+            <label class="lm_label">ชื่อเอนทรี</label>
+            <input class="lm_input" data-act="d-tedit" data-uid="${e.uid}" data-f="comment" value="${esc(r.comment)}">
+            <label class="lm_label">คีย์ภาษาอังกฤษ <small>(คั่นด้วย ,)</small></label>
+            <input class="lm_input" data-act="d-tedit" data-uid="${e.uid}" data-f="key" value="${esc(r.key.join(', '))}">
+            ${(e.keysecondary ?? []).length ? `<label class="lm_label">คีย์รอง <small>(คั่นด้วย ,)</small></label>
+            <input class="lm_input" data-act="d-tedit" data-uid="${e.uid}" data-f="keysecondary" value="${esc(r.keysecondary.join(', '))}">` : ''}
+            <label class="lm_label">เนื้อหา</label>
+            <textarea class="lm_input lm_preview" rows="10" data-act="d-tedit" data-uid="${e.uid}" data-f="content">${esc(r.content)}</textarea>
+            <details class="lm_orig"><summary>ต้นฉบับ</summary>
+              <div class="lm_dim">${esc(nameOf(e))} · คีย์: ${(e.key ?? []).map(esc).join(', ') || '—'}</div>
+              <div class="lm_origtext">${esc(e.content)}</div></details>` : ''}
+        </div>`;
+    }).join('')}</div>
+      <label class="lm_checkrow"><input type="checkbox" data-act="d-tkeep" ${S.tkeep ? 'checked' : ''}><span>เก็บคีย์ภาษาเดิมไว้ด้วย<br><small>ไม่ติ๊ก: เปลี่ยนเป็นคีย์อังกฤษ (คีย์ไทย คีย์ที่เป็นอังกฤษอยู่แล้ว และคีย์ regex เก็บไว้เสมอ) · คีย์รองภาษาเดิมเอาออกเสมอ เพราะถ้าตั้งเงื่อนไข “ต้องมีทุกคำ” ไว้ คีย์สองภาษาจะทำให้ไม่ติดเลย</small></span></label>
+      <div class="lm_row lm_wrap">
+        <button class="lm_btn lm_primary" data-act="d-tapply" ${on ? '' : 'disabled'}>${icon('fa-check')} ใช้ ${on} เอนทรี</button>
+        <button class="lm_btn" data-act="d-tcancel">ทิ้งทั้งหมด</button>
+      </div>`;
+}
+
+function applyTranslate() {
+    pushHistory();
+    let n = 0;
+    S.work = structuredClone(S.work).map(e => {
+        const r = S.translated.get(e.uid);
+        if (!r?.on) return e;
+        n++;
+        return applyTranslation(e, r, { keepKeys: S.tkeep });
+    });
+    S.applied.push(`แปลเป็นภาษาอังกฤษ — ${n} เอนทรี`);
+    S.translated = null; S.texpand.clear();
+    rediagnose();
+    shell.render();
 }
 
 function pushHistory() { S.history.push({ work: S.work, applied: [...S.applied] }); S.saved = null; }
@@ -786,6 +928,12 @@ act('click', {
     'd-ccancel': () => { S.cpick = null; S.condensed = null; S.cexpand.clear(); shell.render(); },
     'd-cexp': el => { const u = Number(el.dataset.uid); S.cexpand.has(u) ? S.cexpand.delete(u) : S.cexpand.add(u); shell.render(); },
     'd-capply': () => applyCondense(),
+    'd-tpick': () => { openTranslatePicker(); shell.render(); },
+    'd-tpickall': el => { S.tpick = new Set(el.dataset.v === '1' ? translatable().map(e => e.uid) : []); shell.render(); },
+    'd-translate': () => startTranslate(),
+    'd-tcancel': () => { S.tpick = null; S.translated = null; S.texpand.clear(); shell.render(); },
+    'd-texp': el => { const u = Number(el.dataset.uid); S.texpand.has(u) ? S.texpand.delete(u) : S.texpand.add(u); shell.render(); },
+    'd-tapply': () => applyTranslate(),
     'd-fixone': el => applyFix([el.dataset.issue]),
     'd-undo': () => { const h = S.history.pop(); if (h) { S.work = h.work; S.applied = h.applied; S.saved = null; rediagnose(); shell.render(); } },
     'd-expand': el => { const id = el.dataset.issue; S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); shell.render(); },
@@ -817,11 +965,22 @@ act('input', {
 
 act('input', {
     'd-cedit': el => { const r = S.condensed?.get(Number(el.dataset.uid)); if (r) r.text = el.value; },
+    'd-tedit': el => {
+        const r = S.translated?.get(Number(el.dataset.uid));
+        if (!r) return;
+        const f = el.dataset.f;
+        r[f] = f === 'key' || f === 'keysecondary' ? cleanKeys(el.value) : el.value;
+    },
 });
 
 act('change', {
     'd-glosson': el => { S.glossary = el.checked; },
     'd-cpickone': el => { const u = Number(el.dataset.uid); el.checked ? S.cpick.add(u) : S.cpick.delete(u); shell.render(); },
+    'd-tpickone': el => { const u = Number(el.dataset.uid); el.checked ? S.tpick.add(u) : S.tpick.delete(u); shell.render(); },
+    'd-ton': el => { const r = S.translated?.get(Number(el.dataset.uid)); if (r) { r.on = el.checked; shell.render(); } },
+    'd-tkeep': el => { S.tkeep = el.checked; shell.render(); },
+    // keys edited by hand: show the combined key list again
+    'd-tedit': el => { if (el.dataset.f !== 'content') shell.render(); },
     'd-con': el => { const r = S.condensed?.get(Number(el.dataset.uid)); if (r) { r.on = el.checked; shell.render(); } },
     'd-files': async el => { if (await readFiles([...el.files])) rebuild(); el.value = ''; shell.render(); },
     'd-pickbook': async el => { if (el.checked) await addBook(el.dataset.book); else S.sources = S.sources.filter(s => s.book !== el.dataset.book); rebuild(); shell.render(); },

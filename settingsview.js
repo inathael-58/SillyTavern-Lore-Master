@@ -142,7 +142,7 @@ function guardBlock() {
 }
 
 let testing = false;
-let aiTab = 'main';     // which list is being edited: main | keys | condense
+let aiTab = 'main';     // which list is being edited: main | keys | condense | organize | translate
 let cachedNames = null; // count of remembered names, loaded once
 /** The list being edited, creating a task's own list (a copy of the main one) when needed. */
 function editList() {
@@ -167,7 +167,7 @@ function aiBlock() {
     }).join('');
     return `
       <div class="lm_dim">เรียงลำดับ API ที่จะใช้ ตัวแรกล่ม ไม่ตอบ หรือตอบมั่ว จะลองตัวถัดไปเอง ตั้งแยกตามงานได้ เช่น คิดคีย์ไทยใช้โมเดลเล็ก (flash-lite) ส่วนย่อเนื้อหาใช้โมเดลที่เก่งกว่า (flash)</div>
-      <div class="lm_seg lm_mt" style="grid-template-columns:repeat(${Object.keys(TASKS).length + 1}, 1fr)">${tabs}</div>
+      <div class="lm_seg lm_mt" style="grid-template-columns:repeat(auto-fit, minmax(86px, 1fr))">${tabs}</div>
       ${aiTab !== 'main' ? `<div class="lm_setrow"><div class="lm_grow"><b>ใช้ชุดหลัก</b><small>${own ? `งาน “${esc(TASKS[aiTab])}” ใช้รายการของตัวเองด้านล่าง` : `งาน “${esc(TASKS[aiTab])}” ใช้ชุดหลัก ปิดเพื่อตั้งแยก`}</small></div>${switchHtml('data-act="s-taskmain"', !own)}</div>` : ''}
       <div class="lm_srclist">${list.map((id, i) => `
         <div class="lm_srcrow">

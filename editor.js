@@ -27,7 +27,7 @@ const warnCtx = () => ({ names: names(), isThaiDictWord });
 const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric: true });
 
 /** Hooks the doctor module fills in (avoids a circular import). */
-export const hooks = { checkBook: async () => {}, importFiles: async () => {}, mergeBooks: () => {}, thaiBook: async () => {}, condenseBook: async () => {} };
+export const hooks = { checkBook: async () => {}, importFiles: async () => {}, mergeBooks: () => {}, thaiBook: async () => {}, condenseBook: async () => {}, translateBook: async () => {} };
 
 const PAGE = 60; // entry cards shown at once (books with 500+ entries stay fast)
 const L = { q: '', bookQ: '', filter: 'all', sort: 'book', selecting: false, selected: new Set(), focus: null, limit: PAGE,
@@ -122,6 +122,7 @@ async function bookMenu(name) {
             { value: 'organize', label: 'ให้ AI จัดหมวดและเก็บชื่อ', icon: 'fa-folder-tree', hint: 'แบ่งหมวดตามเนื้อหา ตั้งชื่อให้สั้นและเป็นระเบียบ ดูก่อนบันทึก' },
             { value: 'thai', label: 'ให้ AI คิดคีย์ไทยทั้งเล่ม', icon: 'fa-language', hint: 'ตรวจและเลือกก่อนเพิ่ม' },
             { value: 'condense', label: 'ให้ AI ย่อเอนทรีที่ยาว', icon: 'fa-compress', hint: 'ตัดคำบรรยายฟุ่มเฟือย เก็บข้อเท็จจริงไว้' },
+            { value: 'translate', label: 'ให้ AI แปลเป็นภาษาอังกฤษ', icon: 'fa-globe', hint: 'เอนทรีภาษาเกาหลี ญี่ปุ่น จีน ฯลฯ ดูและแก้ก่อนใช้' },
             { value: 'gloss', label: 'สร้าง / อัปเดตอภิธานชื่อ', icon: 'fa-spell-check', hint: 'ชื่ออังกฤษ = ตัวสะกดไทย จากคีย์ไทยที่มี' },
             { value: 'export', label: 'ดาวน์โหลด .json', icon: 'fa-download' },
             { value: 'restore', label: 'กู้คืนจากสำรอง…', icon: 'fa-clock-rotate-left', hint: 'ฉบับที่สำรองไว้ก่อนตรวจ & รวม หรือก่อนจัดหมวด (10 ฉบับล่าสุด)' },
@@ -150,6 +151,7 @@ async function bookMenu(name) {
         if (v === 'organize') return push({ v: 'organize', name });
         if (v === 'thai') return hooks.thaiBook(name);
         if (v === 'condense') return hooks.condenseBook(name);
+        if (v === 'translate') return hooks.translateBook(name);
         if (v === 'gloss') {
             const n = await St.updateGlossary(name);
             toast.success(n ? `อภิธานชื่อมี ${n} ชื่อ${settings().glossarySmart ? ' · โหมดประหยัดเปิดอยู่: ส่งเฉพาะชื่อที่เกี่ยวในแต่ละเทิร์น' : ''}` : 'ยังไม่มีเอนทรีที่มีคีย์ไทย เลยไม่มีชื่อให้ทำอภิธาน');

@@ -25,14 +25,14 @@ import { settings, save, migrated } from './prefs.js';
 import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast, paintRange } from './ui.js';
 import { viewLibrary, viewBook, viewEntry, enterBook, hooks, onFieldEvent, onFocusOut, onToggleDetails, focusAfterRender, autosize } from './editor.js';
 import { viewOrganize, onOrganizeToggle } from './organize.js';
-import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, onDoctorToggle } from './doctor.js';
+import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, translateBook, onDoctorToggle } from './doctor.js';
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.8.1'; // keep in sync with manifest.json
+const VERSION = '0.9.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
-const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'settingsview.js', 'style.css', 'manifest.json'];
+const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'style.css', 'manifest.json'];
 const W = St.WIref;
 
 hooks.checkBook = checkBook;
@@ -40,6 +40,7 @@ hooks.importFiles = importFiles;
 hooks.mergeBooks = startMerge;
 hooks.thaiBook = thaiBook;
 hooks.condenseBook = condenseBook;
+hooks.translateBook = translateBook;
 
 // ================================================================ shell
 

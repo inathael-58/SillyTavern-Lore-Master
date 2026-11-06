@@ -1368,6 +1368,151 @@ export function cleanCondensed(text, original) {
     return t;
 }
 
+// ---------------------------------------------------------------- AI: translate entries into English
+
+/**
+ * Scripts other than Latin that a lorebook may be written in. The weight makes one CJK / Hangul
+ * character count like a few Latin letters, so "Kim (김민준)" in an English entry stays English.
+ */
+const SCRIPTS = [
+    ['ko', /[ᄀ-ᇿ㄰-㆏가-힯]/g, 2.5],
+    ['ja', /[぀-ヿㇰ-ㇿ]/g, 2.5],
+    ['zh', /[㐀-䶿一-鿿]/g, 2.5],
+    ['ru', /[Ѐ-ӿ]/g, 1],
+    ['el', /[Ͱ-Ͽ]/g, 1],
+    ['ar', /[؀-ۿ]/g, 1],
+    ['th', /[฀-๿]/g, 1],
+];
+const LATIN = /[A-Za-zÀ-ɏ]/g;
+/** An entry is "written in" another language when that script is at least this share of its letters. */
+export const FOREIGN_SHARE = 0.3;
+
+/** The main non-Latin script of a text: { lang, share } (share of the weighted letters), or null. */
+export function textLanguage(text) {
+    const s = String(text ?? '');
+    const n = {};
+    for (const [lang, re] of SCRIPTS) n[lang] = (s.match(re) ?? []).length;
+    // Japanese mixes kanji with kana: kanji count as Japanese when there is any kana
+    if (n.ja) { n.ja += n.zh; n.zh = 0; }
+    let best = null, total = (s.match(LATIN) ?? []).length;
+    for (const [lang, , w] of SCRIPTS) {
+        total += n[lang] * w;
+        if (n[lang] >= 2 && (!best || n[lang] * w > best.w)) best = { lang, w: n[lang] * w };
+    }
+    return best ? { lang: best.lang, share: best.w / total } : null;
+}
+/** The language an entry is written in (title, keys and content together), or null for English/Latin. */
+export function entryLanguage(e) {
+    return textLanguage([e.comment, ...(e.key ?? []), ...(e.keysecondary ?? []), e.content].join('\n'));
+}
+/** Should the "translate" picker tick this entry for the user? (Thai books are left to the user.) */
+export const wantsTranslation = e => { const l = entryLanguage(e); return !!l && l.lang !== 'th' && l.share >= FOREIGN_SHARE; };
+/** Written in a script other than Latin or Thai (Thai keys are for the chat, so they always stay). */
+const hasForeignScript = s => SCRIPTS.some(([lang, re]) => lang !== 'th' && new RegExp(re.source).test(s));
+
+export const TRANSLATE_SYSTEM = `You translate lorebook (World Info) entries for a roleplay into natural, fluent English.
+Translate everything that is not English: the title, every keyword and the content. Keep the meaning and every detail: do not shorten, summarize, add or explain anything.
+Keep the layout: headings, bullet points, line breaks, brackets, and formats such as "Name: value" or W++ lists. Keep words that are already English as they are.
+Keep macros such as {{char}} and {{user}} exactly as written.
+Names of people, places and groups: romanize them the usual way for their language (Korean: Revised Romanization, family name first and the given name as one word, e.g. 김민준 → Kim Minjun; Japanese: Hepburn) unless the entry itself or the list of known names gives a spelling. Spell each name the same way every time. Names made of ordinary words may be translated (a café called 달빛 → Moonlight Café).
+Keywords are what the chat is scanned for, so each one must be a word or name someone would actually write in English: one keyword per line.
+Keep any thinking brief. Answer in exactly this format and nothing else:
+<title>translated title</title>
+<keys>
+one keyword per line
+</keys>
+<secondary>
+one keyword per line (leave empty when there are none)
+</secondary>
+<names>
+original = English, one per line, for every name of a person, place or group in this entry
+</names>
+<content>
+the translated content
+</content>`;
+
+/** Known spellings (original -> English) that matter for this entry. */
+export function namesFor(entry, known, max = 60) {
+    const text = [entry.comment, ...(entry.key ?? []), ...(entry.keysecondary ?? []), entry.content].join('\n');
+    const out = [];
+    for (const [orig, en] of known ?? []) {
+        if (out.length >= max) break;
+        if (orig && text.includes(orig)) out.push([orig, en]);
+    }
+    return out;
+}
+export function translateRequest(entry, known = []) {
+    const plain = list => (list ?? []).filter(k => !parseRegexKey(String(k).trim()));
+    const keys = plain(entry.key), sec = plain(entry.keysecondary);
+    const names = namesFor(entry, known);
+    return [
+        names.length ? `Known names (use these spellings):\n${names.map(([o, e]) => `${o} = ${e}`).join('\n')}\n` : '',
+        `Title: ${entry.comment || '(none)'}`,
+        `Keywords:\n${keys.length ? keys.join('\n') : '(none)'}`,
+        `Secondary keywords:\n${sec.length ? sec.join('\n') : '(none)'}`,
+        '',
+        `<entry>\n${entry.content ?? ''}\n</entry>`,
+    ].filter(x => x !== '').join('\n');
+}
+/** Room for the answer: English runs about one token per CJK/Hangul character, plus room to think. */
+export const translateBudget = entry => Math.max(4000, Math.round(String([entry.comment, ...(entry.key ?? []), entry.content].join(' ')).length * 1.3) + 2000);
+
+/**
+ * Read the model's translation. Throws (in Thai, for the progress card) when it is unusable,
+ * so ask() moves on to the next API.
+ * @returns {{comment:string, key:string[], keysecondary:string[], content:string, names:[string,string][]}}
+ */
+export function parseTranslation(text, entry) {
+    const t = String(text ?? '').replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^```\w*[ \t]*$/gm, '');
+    const tag = name => { const m = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, 'i').exec(t); return m ? m[1].trim() : null; };
+    const lines = s => String(s ?? '').split('\n').map(x => x.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').trim()).filter(x => x && !/^\(?none\)?$/i.test(x));
+    const orig = String(entry.content ?? '');
+    let content = tag('content');
+    if (content === null) {
+        if (orig.trim()) throw new Error(/<content>/i.test(t) ? 'คำตอบถูกตัดกลางทาง (ไม่ครบ)' : 'คำตอบไม่ตรงรูปแบบ');
+        content = '';
+    }
+    content = content.replace(/^<entry>\s*|\s*<\/entry>$/gi, '').trim();
+    if (orig.trim() && !content) throw new Error('ได้เนื้อหาว่าง');
+    for (const m of new Set(orig.match(/\{\{\w+\}\}/g) ?? [])) if (!content.toLowerCase().includes(m.toLowerCase())) throw new Error(`มาโคร ${m} หายไป`);
+    const from = entryLanguage(entry);
+    if (from && from.lang !== 'th' && orig.trim()) {
+        const left = textLanguage(content);
+        if (left?.lang === from.lang && left.share > 0.2) throw new Error('ยังแปลไม่หมด');
+        // English is never much shorter than Korean / Japanese / Chinese for the same text
+        if (content.length < orig.length * 0.4) throw new Error('สั้นกว่าต้นฉบับมาก อาจแปลไม่ครบ');
+    }
+    const key = cleanKeys(lines(tag('keys')));
+    const plainKeys = (entry.key ?? []).filter(k => !parseRegexKey(String(k).trim()));
+    if (plainKeys.length && !key.length) throw new Error('ไม่ได้คีย์กลับมา');
+    const names = [];
+    for (const l of lines(tag('names'))) {
+        const m = /^(.+?)\s*(?:=|→|->)\s*(.+)$/.exec(l);
+        if (m && hasForeignScript(m[1]) && !hasForeignScript(m[2])) names.push([m[1].trim(), m[2].trim()]);
+    }
+    const title = tag('title');
+    return { comment: title && !/^\(?none\)?$/i.test(title) ? title : entry.comment || '', key, keysecondary: cleanKeys(lines(tag('secondary'))), content, names };
+}
+
+/**
+ * The entry with a translation applied. English keys come first; regex keys and keys already in
+ * Latin script stay. Original-language primary keys stay only with `keepKeys`. Secondary keys in
+ * the old language always go: with "must have all of them" logic, mixing two languages would
+ * stop the entry from ever firing.
+ */
+export function applyTranslation(entry, tr, { keepKeys = false } = {}) {
+    const stay = k => parseRegexKey(String(k).trim()) || !hasForeignScript(String(k));
+    const oldKeys = (entry.key ?? []).filter(k => keepKeys || stay(k));
+    const oldSec = (entry.keysecondary ?? []).filter(stay);
+    return {
+        ...entry,
+        comment: tr.comment,
+        content: tr.content,
+        key: cleanKeys([...tr.key, ...oldKeys]),
+        keysecondary: (entry.keysecondary ?? []).length ? cleanKeys([...tr.keysecondary, ...oldSec]) : (entry.keysecondary ?? []),
+    };
+}
+
 // ---------------------------------------------------------------- character card PNG
 
 /** The character card JSON inside a PNG (tEXt chunk "ccv3", else "chara"), or null. */
