@@ -11,7 +11,7 @@ import {
 } from './lib.js';
 import * as St from './store.js';
 import { settings, save } from './prefs.js';
-import { esc, icon, act, shell, goTab, goTo, toast, download, fmt } from './ui.js';
+import { esc, icon, act, shell, goTab, goTo, toast, download, fmt, UI } from './ui.js';
 import { isThaiDictWord } from './editor.js';
 import { ask, activeSources, sourceLabel } from './ai.js';
 import { nameCache, rememberNames } from './cache.js';
@@ -47,6 +47,7 @@ const S = {
     tnames: new Map(),      // original name -> English spelling, shared by every entry of one run
     texpand: new Set(),
     tkeep: false,           // keep the original-language keys next to the English ones
+    notice: null,           // { kind: 'other' | 'stale', book } when this page is not about the book open in "เล่ม"
 };
 let nextSourceId = 1;
 
@@ -63,13 +64,16 @@ function scanOpts() {
 function rebuild() {
     S.base = mergeBooks(S.sources.map(s => ({ name: s.name, entries: s.entries })));
     S.work = structuredClone(S.base);
-    S.history = []; S.applied = []; S.saved = null;
-    if (!S.job) resetAi();
+    S.history = []; S.applied = []; S.saved = null; S.notice = null;
+    S.expanded.clear();
+    // new books: whatever the AI tools found (or are still working on) was about the old ones
+    resetAi();
     rediagnose();
     suggestName();
 }
 function rediagnose() { S.issues = S.work.length ? diagnose(S.work, scanOpts()) : []; }
 function resetAi() {
+    if (S.job) { S.job.abort.abort(); S.job = null; }
     S.thai = null; S.thaiPlan = null; S.cpick = null; S.condensed = null; S.cexpand.clear();
     S.tpick = null; S.translated = null; S.texpand.clear(); S.tnames = new Map();
 }
@@ -112,6 +116,72 @@ async function readFiles(files) {
         } catch (e) { toast.error(`${f.name}: ${e?.message ?? e}`, 'อ่านไฟล์ไม่ได้'); }
     }
     return n;
+}
+
+// ---------------------------------------------------------------- which book this page is about
+
+/** The book open in the "เล่ม" tab (its book, entry or organize screen), or null on the list of books. */
+function openBookName() {
+    const v = [...UI.stack].reverse().find(f => f.name);
+    return v && St.bookNames().includes(v.name) ? v.name : null;
+}
+/** The one SillyTavern book this page was loaded from, or null (several books, or files). */
+const singleBook = () => (S.sources.length === 1 && S.sources[0].book) || null;
+/** Work that switching books would throw away. */
+const hasWork = () => !S.saved && !!(S.applied.length || S.history.length || S.job || S.thai || S.condensed || S.translated);
+/** Was the book edited (in "เล่ม" or ST's own panel) after this page loaded it? */
+async function changedSince(src) {
+    try {
+        if (St.cur?.name === src.book && St.cur.dirty) await St.flush();
+        const now = await W.loadWorldInfo(src.book);
+        return !!now && JSON.stringify(now) !== JSON.stringify(src.raw);
+    } catch { return false; }
+}
+async function loadOnly(name) {
+    S.sources = []; await addBook(name); rebuild();
+    if (S.step === 'src') S.step = 'fix';
+}
+
+/**
+ * Opening the ตรวจ & รวม tab: follow the book open in "เล่ม", and pick up edits made there.
+ * With nothing to lose this happens by itself; otherwise a banner asks first.
+ */
+export async function enterDoctor() {
+    const open = openBookName();
+    const single = singleBook();
+    S.notice = null;
+    if (S.sources.length && open && single !== open) {
+        if (single && !hasWork()) {
+            await loadOnly(open);
+            toast.info(`เปลี่ยนไปตรวจ “${open}” ตามเล่มที่เปิดอยู่`, 'Lore Master', { timeOut: 3000 });
+        } else S.notice = { kind: 'other', book: open };
+    } else if (single && St.bookNames().includes(single) && S.saved?.name !== single && await changedSince(S.sources[0])) {
+        if (!hasWork()) await loadOnly(single);
+        else S.notice = { kind: 'stale', book: single };
+    }
+    goTab('doctor');
+}
+
+function noticeCard() {
+    const n = S.notice;
+    if (!n) return '';
+    const what = singleBook() ? `“${esc(singleBook())}”` : `${S.sources.length} เล่ม/ไฟล์ที่เลือกไว้`;
+    const work = S.applied.length ? `ซ่อมไว้ ${S.applied.length} ข้อ ยังไม่ได้บันทึก` : S.job ? 'AI กำลังทำงานอยู่' : (S.thai || S.condensed || S.translated) ? 'มีผลจาก AI ที่ยังไม่ได้ใช้' : '';
+    return n.kind === 'other' ? `
+      <div class="lm_card lm_notice">
+        <div>${icon('fa-circle-info')} หน้านี้ยังเป็นของ ${what}${work ? ` (${work})` : ''} · เล่มที่เปิดอยู่คือ <b>“${esc(n.book)}”</b></div>
+        <div class="lm_row lm_wrap">
+          <button class="lm_btn lm_primary" data-act="d-switch" data-book="${esc(n.book)}">${icon('fa-arrow-right-arrow-left')} ${work ? 'ทิ้งงานนี้แล้ว' : ''}ตรวจ “${esc(n.book)}” แทน</button>
+          <button class="lm_btn" data-act="d-noticex">ทำต่อ</button>
+        </div>
+      </div>` : `
+      <div class="lm_card lm_notice">
+        <div>${icon('fa-triangle-exclamation')} <b>“${esc(n.book)}”</b> ถูกแก้ที่อื่นหลังเริ่มตรวจ หน้านี้ยังเป็นฉบับก่อนแก้ ถ้าบันทึกทับ การแก้นั้นจะหาย (มีสำรองให้กู้คืน)</div>
+        <div class="lm_row lm_wrap">
+          <button class="lm_btn lm_primary" data-act="d-switch" data-book="${esc(n.book)}">${icon('fa-rotate')} โหลดฉบับล่าสุด${work ? ` (ทิ้งที่${S.applied.length ? 'ซ่อม' : 'ทำ'}ไว้)` : ''}</button>
+          <button class="lm_btn" data-act="d-noticex">ทำต่อ</button>
+        </div>
+      </div>`;
 }
 
 // ---------------------------------------------------------------- entry points used by other modules
@@ -170,6 +240,7 @@ export function viewDoctor() {
           <button class="lm_step ${S.step === id ? 'lm_on' : ''}" data-act="d-step" data-step="${id}" ${id !== 'src' && !S.work.length ? 'disabled' : ''}>
             <span class="lm_stepnum">${i + 1}</span><span>${label}</span>${id === 'fix' && high ? `<b class="lm_badge">${high}</b>` : ''}
           </button>`).join('')}</div>
+        ${noticeCard()}
         <div class="lm_doctor">${body}</div>
         <div class="lm_bottom_pad"></div>`,
     };
@@ -189,6 +260,7 @@ function viewSources() {
       <label class="lm_choice">${icon('fa-file-import')}<b>เลือกไฟล์</b><small>.json ของ ST · JanitorAI · การ์ด .png (ตรวจก่อน import ได้) · หลายไฟล์ได้</small>
         <input type="file" accept=".json,application/json,.png,image/png" multiple hidden data-act="d-files"></label>
       <button class="lm_choice ${S.picker ? 'lm_on' : ''}" data-act="d-picker">${icon('fa-book')}<b>เลือกจากเล่มใน ST</b><small>${(St.bookNames()).length} เล่ม</small></button>
+      ${openBookName() && !S.sources.some(s => s.book === openBookName()) ? `<button class="lm_choice" data-act="d-switch" data-book="${esc(openBookName())}">${icon('fa-book-open')}<b>เล่มที่เปิดอยู่</b><small>${esc(openBookName())}</small></button>` : ''}
       ${cc ? `<button class="lm_choice" data-act="d-charbooks">${icon('fa-user')}<b>เล่มของ ${esc(cc.ch.name)}</b><small>เล่มหลัก + เล่มเสริม</small></button>` : ''}
     </div>
     ${S.picker ? viewPicker() : ''}
@@ -403,37 +475,39 @@ async function startThai() {
     const queue = [];
     for (let i = 0; i < p.todo.length; i += NAME_BATCH) queue.push({ list: p.todo.slice(i, i + NAME_BATCH), retry: false });
     S.job = { kind: 'thai', done: 0, total: queue.length, label: '', abort: new AbortController(), errors: [] };
+    const job = S.job;
     shell.render();
     const retryLater = [];
-    while (queue.length && !S.job.abort.signal.aborted) {
+    while (queue.length && !job.abort.signal.aborted) {
         const chunk = queue.shift();
         try {
             const res = await ask({
-                task: 'keys', system: NAME_SYSTEM, user: nameRequest(chunk.list), maxTokens: 120 * chunk.list.length + 400, signal: S.job.abort.signal,
+                task: 'keys', system: NAME_SYSTEM, user: nameRequest(chunk.list), maxTokens: 120 * chunk.list.length + 400, signal: job.abort.signal,
                 accept: text => { const m = parseNameReply(text, chunk.list); if (!m.size) throw new Error('ไม่ได้ชื่อไหนกลับมาเลย'); return m; },
-                onTry: label => { S.job.label = `${label} · ${chunk.list.length} ชื่อ`; jobUpdate(); },
+                onTry: label => { job.label = `${label} · ${chunk.list.length} ชื่อ`; jobUpdate(); },
             });
             for (const [k, v] of res) results.set(k, v);
             await rememberNames(res);
             // names the model skipped: ask once more, together
             if (!chunk.retry) retryLater.push(...chunk.list.filter(n => !res.has(n.lower)));
         } catch (err) {
-            if (S.job.abort.signal.aborted) break;
+            if (job.abort.signal.aborted) break;
             if (chunk.list.length > 10 && !chunk.retry) {
                 // a big batch may be cut off: try the two halves instead
                 const h = Math.ceil(chunk.list.length / 2);
                 queue.unshift({ list: chunk.list.slice(0, h), retry: true }, { list: chunk.list.slice(h), retry: true });
-                S.job.total += 2;
-            } else S.job.errors.push(String(err?.message ?? err).split('\n')[0]);
+                job.total += 2;
+            } else job.errors.push(String(err?.message ?? err).split('\n')[0]);
         }
-        S.job.done++;
+        job.done++;
         if (!queue.length && retryLater.length) {
             const again = retryLater.splice(0);
-            for (let i = 0; i < again.length; i += NAME_BATCH) { queue.push({ list: again.slice(i, i + NAME_BATCH), retry: true }); S.job.total++; }
+            for (let i = 0; i < again.length; i += NAME_BATCH) { queue.push({ list: again.slice(i, i + NAME_BATCH), retry: true }); job.total++; }
         }
         jobUpdate();
     }
-    const errs = S.job.errors;
+    if (S.job !== job) return; // the book changed meanwhile: these results belong to the old one
+    const errs = job.errors;
     S.job = null;
     deriveNames(results, p.derived);
     await rememberNames(new Map([...p.derived.keys()].filter(k => results.has(k)).map(k => [k, results.get(k)])));
@@ -506,25 +580,27 @@ function startCondense() {
     S.condensed = new Map();
     S.cpick = null;
     S.job = { kind: 'condense', done: 0, total: list.length, label: '', abort: new AbortController(), errors: [] };
+    const job = S.job;
     shell.render();
     (async () => {
         for (const e of list) {
-            if (S.job.abort.signal.aborted) break;
+            if (job.abort.signal.aborted) break;
             try {
                 const text = await ask({
-                    task: 'condense', system: CONDENSE_SYSTEM, user: condenseRequest(e, ratio), maxTokens: Math.max(600, Math.round(estTokens(e.content) * 1.2)), signal: S.job.abort.signal,
+                    task: 'condense', system: CONDENSE_SYSTEM, user: condenseRequest(e, ratio), maxTokens: Math.max(600, Math.round(estTokens(e.content) * 1.2)), signal: job.abort.signal,
                     accept: out => { const t = cleanCondensed(out, e.content); if (!t) throw new Error('ได้เนื้อหาที่ใช้ไม่ได้'); return t; },
-                    onTry: label => { S.job.label = `${label} · ${nameOf(e)}`; jobUpdate(); },
+                    onTry: label => { job.label = `${label} · ${nameOf(e)}`; jobUpdate(); },
                 });
                 S.condensed.set(e.uid, { text, on: true });
             } catch (err) {
-                if (S.job.abort.signal.aborted) break;
-                S.job.errors.push(`${nameOf(e)}: ${String(err?.message ?? err).split('\n')[0]}`);
+                if (job.abort.signal.aborted) break;
+                job.errors.push(`${nameOf(e)}: ${String(err?.message ?? err).split('\n')[0]}`);
             }
-            S.job.done++;
+            job.done++;
             jobUpdate();
         }
-        const errs = S.job.errors;
+        if (S.job !== job) return; // the book changed meanwhile: these results belong to the old one
+        const errs = job.errors;
         S.job = null;
         if (!S.condensed.size) { S.condensed = null; toast.error(errs.join('\n') || 'ไม่ได้ผลลัพธ์', 'ย่อไม่สำเร็จ'); }
         else if (errs.length) toast.warning(`ย่อไม่ได้ ${errs.length} เอนทรี`);
@@ -596,27 +672,29 @@ function startTranslate() {
     S.translated = new Map();
     S.tpick = null;
     S.job = { kind: 'translate', done: 0, total: list.length, label: '', abort: new AbortController(), errors: [] };
+    const job = S.job;
     shell.render();
     (async () => {
         for (const e of list) {
-            if (S.job.abort.signal.aborted) break;
+            if (job.abort.signal.aborted) break;
             try {
                 const tr = await ask({
-                    task: 'translate', system: TRANSLATE_SYSTEM, user: translateRequest(e, S.tnames), maxTokens: translateBudget(e), signal: S.job.abort.signal,
+                    task: 'translate', system: TRANSLATE_SYSTEM, user: translateRequest(e, S.tnames), maxTokens: translateBudget(e), signal: job.abort.signal,
                     accept: out => parseTranslation(out, e),
-                    onTry: label => { S.job.label = `${label} · ${nameOf(e)}`; jobUpdate(); },
+                    onTry: label => { job.label = `${label} · ${nameOf(e)}`; jobUpdate(); },
                 });
                 // later entries spell these names the same way
                 for (const [orig, en] of tr.names) if (!S.tnames.has(orig)) S.tnames.set(orig, en);
                 S.translated.set(e.uid, { comment: tr.comment, key: tr.key, keysecondary: tr.keysecondary, content: tr.content, on: true });
             } catch (err) {
-                if (S.job.abort.signal.aborted) break;
-                S.job.errors.push(`${nameOf(e)}: ${String(err?.message ?? err).split('\n')[0]}`);
+                if (job.abort.signal.aborted) break;
+                job.errors.push(`${nameOf(e)}: ${String(err?.message ?? err).split('\n')[0]}`);
             }
-            S.job.done++;
+            job.done++;
             jobUpdate();
         }
-        const errs = S.job.errors;
+        if (S.job !== job) return; // the book changed meanwhile: these results belong to the old one
+        const errs = job.errors;
         S.job = null;
         if (!S.translated.size) { S.translated = null; toast.error(errs.join('\n') || 'ไม่ได้ผลลัพธ์', 'แปลไม่สำเร็จ'); }
         else if (errs.length) toast.warning(`แปลไม่ได้ ${errs.length} เอนทรี: ${errs.slice(0, 2).join(' · ')}`);
@@ -884,6 +962,8 @@ act('click', {
     'd-fixsafe': () => applyFix(S.issues.filter(i => i.kind === 'safe').map(i => i.id)),
     'd-thai': () => prepareThai(),
     'd-stop': () => { S.job?.abort.abort(); },
+    'd-switch': async el => { await loadOnly(el.dataset.book); shell.render(); },
+    'd-noticex': () => { S.notice = null; shell.render(); },
     'd-sug': el => {
         const r = S.thai?.get(Number(el.dataset.uid));
         if (!r) return;
