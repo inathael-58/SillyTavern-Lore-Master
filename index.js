@@ -25,11 +25,11 @@ import { settings, save, migrated } from './prefs.js';
 import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast, paintRange } from './ui.js';
 import { viewLibrary, viewBook, viewEntry, enterBook, hooks, onFieldEvent, onFocusOut, onToggleDetails, focusAfterRender, autosize } from './editor.js';
 import { viewOrganize, onOrganizeToggle } from './organize.js';
-import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, translateBook, onDoctorToggle } from './doctor.js';
+import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, translateBook, enterDoctor, onDoctorToggle } from './doctor.js';
 import { viewSettings } from './settingsview.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.9.0'; // keep in sync with manifest.json
+const VERSION = '0.9.1'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'style.css', 'manifest.json'];
@@ -77,7 +77,12 @@ function onClick(ev) {
     const a = el.dataset.act;
     if (a === 'close') return closeLM();
     if (a === 'back') { if (!back()) closeLM(); return; }
-    if (a === 'nav') { const t = el.dataset.tab; if (UI.tab === t && t === 'books' && UI.stack.length > 1) { UI.stack = [UI.stack[0]]; } goTab(t); return; }
+    if (a === 'nav') {
+        const t = el.dataset.tab;
+        if (UI.tab === t && t === 'books' && UI.stack.length > 1) { UI.stack = [UI.stack[0]]; }
+        if (t === 'doctor' && UI.tab !== 'doctor') { enterDoctor().catch(e => { console.error(LOG, e); goTab(t); }); return; }
+        goTab(t); return;
+    }
     dispatch('click', ev);
 }
 function onKeydown(ev) {
