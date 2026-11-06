@@ -6,6 +6,7 @@ import {
     entryStatus, entriesOf, freeUid, newEntry, keyWarnings, entryWarnings, entryMatches, positionShort, bookStats, SORTS,
     parseJsonLoose, properNames, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
     isGlossary, pickGlossary, condenseRequest, cleanCondensed, LONG_TOKENS,
+    textLanguage, entryLanguage, wantsTranslation, translateRequest, parseTranslation, applyTranslation, namesFor,
     keyScanner, trimToLimits, wouldFire, cardFromPng, keyPlan,
 } from '../lib.js';
 
@@ -566,4 +567,74 @@ test('organiser replies are parsed and checked', () => {
     assert.equal(r.get('2').name, 'EMC');
     assert.throws(() => parseOrganizeReply('{"entries":[[1,"a","b"]]}', [1, 2, 3]));
     assert.match(organizeRequest([{ uid: 7, comment: '[Book] X', key: ['a', 'b'], content: 'Long\ntext' }]), /^Entries .*\n7 \| \[Book\] X \| a, b \| Long text$/);
+});
+
+test('translate: which entries are in another language', () => {
+    assert.equal(textLanguage('Kim Minjun is a barista.'), null);
+    assert.equal(textLanguage('김민준은 카페 달빛의 바리스타다.').lang, 'ko');
+    assert.equal(textLanguage('彼は東京に住んでいる。').lang, 'ja', 'kanji with kana is Japanese');
+    assert.equal(textLanguage('他住在北京。').lang, 'zh');
+    assert.ok(textLanguage('Kim Minjun (김민준) works at the Moonlight Café near the station every day.').share < 0.3, 'a name in brackets stays English');
+    const ko = { uid: 1, comment: '김민준', key: ['김민준', '민준'], content: '카페 달빛의 바리스타. {{user}}의 소꿉친구.' };
+    assert.equal(entryLanguage(ko).lang, 'ko');
+    assert.ok(wantsTranslation(ko));
+    assert.ok(!wantsTranslation({ comment: 'มาร์ก', key: ['มาร์ก'], content: 'มาร์กเป็นนักบาส' }), 'Thai is not ticked for the user');
+    assert.ok(!wantsTranslation({ comment: 'Cody', key: ['Cody'], content: 'Cody plays ball.' }));
+});
+
+test('translate: request carries keys and the names already spelled', () => {
+    const e = { comment: '김민준', key: ['김민준', '/민준|준이/'], keysecondary: ['카페'], content: '김민준은 이서연을 좋아한다.' };
+    const req = translateRequest(e, new Map([['이서연', 'Lee Seoyeon'], ['박지호', 'Park Jiho']]));
+    assert.match(req, /Known names \(use these spellings\):\n이서연 = Lee Seoyeon\n/);
+    assert.doesNotMatch(req, /Park Jiho/, 'only names in this entry');
+    assert.doesNotMatch(req, /준이/, 'regex keys are not sent');
+    assert.match(req, /Secondary keywords:\n카페/);
+    assert.match(req, /<entry>\n김민준은 이서연을 좋아한다.\n<\/entry>/);
+    assert.deepEqual(namesFor(e, [['서연', 'Seoyeon'], ['지호', 'Jiho']]), [['서연', 'Seoyeon']]);
+});
+
+test('translate: reading the reply, and refusing unusable ones', () => {
+    const e = { comment: '김민준', key: ['김민준', '민준'], keysecondary: [], content: '카페 달빛의 바리스타. {{user}}의 소꿉친구이며 커피를 사랑한다.' };
+    const good = `<think>ok</think>
+<title>Kim Minjun</title>
+<keys>
+- Kim Minjun
+- Minjun
+</keys>
+<secondary>
+</secondary>
+<names>
+김민준 = Kim Minjun
+달빛 = Moonlight Café
+Kim = Kim
+</names>
+<content>
+Barista at the Moonlight Café. {{user}}'s childhood friend, and he loves coffee.
+</content>`;
+    const tr = parseTranslation(good, e);
+    assert.equal(tr.comment, 'Kim Minjun');
+    assert.deepEqual(tr.key, ['Kim Minjun', 'Minjun']);
+    assert.deepEqual(tr.keysecondary, []);
+    assert.deepEqual(tr.names, [['김민준', 'Kim Minjun'], ['달빛', 'Moonlight Café']]);
+    assert.match(tr.content, /^Barista at the Moonlight Café/);
+    assert.throws(() => parseTranslation(good.replace(/\n<\/content>/, ''), e), /ตัดกลางทาง/, 'cut off');
+    assert.throws(() => parseTranslation(good.replace("{{user}}'s", 'your'), e), /\{\{user\}\}/, 'lost a macro');
+    assert.throws(() => parseTranslation(good.replace(/Barista[^\n]*/, '카페 달빛의 바리스타. {{user}}의 소꿉친구이며 커피를 사랑한다.'), e), /แปลไม่หมด/);
+    assert.throws(() => parseTranslation(good.replace(/Barista[^\n]*/, '{{user}}'), e), /สั้นกว่า/);
+    assert.throws(() => parseTranslation(good.replace(/<keys>[\s\S]*?<\/keys>/, '<keys>\n</keys>'), e), /คีย์/);
+    assert.equal(parseTranslation(good.replace('<title>Kim Minjun</title>', '<title>(none)</title>'), e).comment, '김민준');
+});
+
+test('translate: applying swaps keys but keeps Thai, English and regex keys', () => {
+    const e = { uid: 3, comment: '김민준', key: ['김민준', 'มินจุน', 'Minjun', '/민준|준이/'], keysecondary: ['카페', 'cafe'], selectiveLogic: 3, content: 'x', order: 7 };
+    const tr = { comment: 'Kim Minjun', key: ['Kim Minjun', 'Minjun'], keysecondary: ['Café'], content: 'Barista.' };
+    const out = applyTranslation(e, tr);
+    assert.equal(out.comment, 'Kim Minjun');
+    assert.equal(out.content, 'Barista.');
+    assert.deepEqual(out.key, ['Kim Minjun', 'Minjun', 'มินจุน', '/민준|준이/']);
+    assert.deepEqual(out.keysecondary, ['Café', 'cafe'], 'old-language secondary keys always go');
+    assert.equal(out.order, 7);
+    assert.deepEqual(applyTranslation(e, tr, { keepKeys: true }).key, ['Kim Minjun', 'Minjun', '김민준', 'มินจุน', '/민준|준이/']);
+    assert.deepEqual(applyTranslation({ ...e, keysecondary: [] }, tr).keysecondary, [], 'no secondary keys added where there were none');
+    assert.deepEqual(e.key, ['김민준', 'มินจุน', 'Minjun', '/민준|준이/'], 'the original is not changed');
 });
