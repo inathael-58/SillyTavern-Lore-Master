@@ -505,16 +505,124 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_dialog_btns { display: flex; gap: 8px; justify-content: flex-end; }
 
 /* ---------------------------------------------------------------- launchers outside the overlay */
-#lm_launcher {
-    position: fixed; z-index: 3000; width: 48px; height: 48px; border-radius: 16px;
-    display: grid; place-items: center; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
-    color: #fff; font-size: 21px;
-    background: linear-gradient(135deg, var(--SmartThemeQuoteColor, #e18a24), color-mix(in srgb, var(--SmartThemeQuoteColor, #e18a24) 55%, #8a4bd6));
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); opacity: 0.88; transition: opacity 0.15s, scale 0.15s;
+/*
+ * .lm_launch is the floating button and its preview in the look editor (look.js). The outer element
+ * carries position, size, opacity, shadow and the alert dot; .lm_lshape is the visible shape (masked
+ * for hexagon / shield / heart …) and the face inside it. Shadow and glow are filters on the outer
+ * element so they follow a masked outline. No transforms on #lm_launcher itself (ST's 3D <html>).
+ */
+.lm_launch {
+    --lm-lsize: 48px;
+    --lm-licon: 21px;
+    --lm-laccent: var(--SmartThemeQuoteColor, #e18a24);
+    --lm-lbg: linear-gradient(135deg, var(--lm-laccent), color-mix(in srgb, var(--lm-laccent) 55%, #8a4bd6));
+    --lm-lfg: #fff;
+    --lm-lop: 0.88;
+    position: relative;
+    width: var(--lm-lsize); height: var(--lm-lsize);
+    display: grid; place-items: center;
+    cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
+    opacity: var(--lm-lop);
 }
-#lm_launcher:hover, #lm_launcher:focus-visible { opacity: 1; outline: none; }
+.lm_launch[data-bg="glass"], .lm_launch[data-bg="none"] { --lm-lfg: var(--lm-laccent); }
+.lm_launch[data-shadow="1"] { filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.35)); }
+#lm_launcher { position: fixed; z-index: 3000; transition: opacity 0.15s, scale 0.15s; }
+#lm_launcher:hover, #lm_launcher:focus-visible, #lm_launcher.lm_dragging { opacity: 1; outline: none; }
+#lm_launcher:hover { scale: 1.06; }
 #lm_launcher:active { scale: 0.94; }
-#lm_launcher.lm_dragging { transition: none; opacity: 1; scale: 1.08; cursor: grabbing; }
+#lm_launcher.lm_dragging { transition: none; scale: 1.08; cursor: grabbing; }
+
+.lm_lshape {
+    position: relative; box-sizing: border-box;
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center; gap: calc(var(--lm-licon) * 0.3);
+    border-radius: 33%; overflow: hidden;
+    color: var(--lm-lfg); background: var(--lm-lbg);
+    font-size: var(--lm-licon); line-height: 1;
+}
+.lm_launch[data-bg="glass"] .lm_lshape {
+    background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #1c1c22) 82%, transparent);
+    backdrop-filter: blur(var(--SmartThemeBlurStrength, 8px)); -webkit-backdrop-filter: blur(var(--SmartThemeBlurStrength, 8px));
+}
+.lm_launch[data-border="1"] .lm_lshape { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--SmartThemeBorderColor, #888) 70%, var(--lm-lfg)); }
+.lm_licon, .lm_lemoji, .lm_limg { pointer-events: none; }
+.lm_lemoji { font-size: calc(var(--lm-licon) * 1.1); }
+.lm_limg { width: 100%; height: 100%; object-fit: cover; display: block; -webkit-user-drag: none; }
+.lm_launch[data-fit="contain"] .lm_limg { object-fit: contain; width: 82%; height: 82%; }
+.lm_llabel { display: none; font: 700 calc(var(--lm-licon) * 0.72) / 1 var(--mainFontFamily, sans-serif); white-space: nowrap; pointer-events: none; }
+
+/* shapes */
+.lm_launch[data-shape="circle"] .lm_lshape { border-radius: 50%; }
+.lm_launch[data-shape="bubble"] .lm_lshape { border-radius: 50% 50% 14% 50%; }
+.lm_launch[data-edge="left"][data-shape="bubble"] .lm_lshape { border-radius: 50% 50% 50% 14%; }
+.lm_launch[data-shape="pill"] { width: auto; min-width: var(--lm-lsize); }
+.lm_launch[data-shape="pill"] .lm_lshape { border-radius: 999px; padding: 0 calc(var(--lm-lsize) * 0.32); }
+.lm_launch[data-shape="pill"] .lm_llabel { display: inline; }
+.lm_launch[data-shape="pill"] .lm_limg { width: calc(var(--lm-lsize) * 0.7); height: calc(var(--lm-lsize) * 0.7); border-radius: 50%; flex: none; }
+.lm_launch[data-masked="1"] .lm_lshape {
+    border-radius: 0;
+    -webkit-mask: var(--lm-lmask) center / 100% 100% no-repeat;
+    mask: var(--lm-lmask) center / 100% 100% no-repeat;
+}
+.lm_launch[data-masked="1"] .lm_licon, .lm_launch[data-masked="1"] .lm_lemoji { translate: 0 var(--lm-lnudge, 0); }
+.lm_launch[data-shape="sticker"] .lm_lshape { background: none; backdrop-filter: none; -webkit-backdrop-filter: none; border-radius: 0; overflow: visible; box-shadow: none !important; }
+.lm_launch[data-shape="sticker"] .lm_limg { object-fit: contain; width: 100%; height: 100%; }
+.lm_launch[data-shape="sticker"] .lm_licon, .lm_launch[data-shape="sticker"] .lm_lemoji { font-size: calc(var(--lm-lsize) * 0.78); }
+
+/* idle motion */
+.lm_launch[data-anim="float"] .lm_lshape { animation: lm_lfloat 3.2s ease-in-out infinite; }
+.lm_launch[data-anim="sway"] .lm_lshape { animation: lm_lsway 3.6s ease-in-out infinite; transform-origin: 50% 85%; }
+.lm_launch[data-anim="pulse"] .lm_lshape { animation: lm_lpulse 2.2s ease-in-out infinite; }
+.lm_launch[data-anim="spin"] .lm_licon, .lm_launch[data-anim="spin"] .lm_lemoji, .lm_launch[data-anim="spin"] .lm_limg { animation: lm_lspin 9s linear infinite; }
+.lm_launch[data-anim="glow"] { animation: lm_lglow 2.6s ease-in-out infinite; }
+.lm_launch[data-anim="shimmer"] .lm_lshape::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.6) 50%, transparent 65%);
+    translate: -130% 0; animation: lm_lshine 3.6s ease-in-out infinite;
+}
+.lm_launch[data-shape="sticker"] .lm_lshape::after { display: none; }
+.lm_launch[data-anim="alert"][data-alert="1"] .lm_lshape { animation: lm_lshake 2.4s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes lm_lfloat { 50% { transform: translateY(-5px); } }
+@keyframes lm_lsway { 25% { transform: rotate(-7deg); } 75% { transform: rotate(7deg); } }
+@keyframes lm_lpulse { 50% { transform: scale(1.08); } }
+@keyframes lm_lspin { to { transform: rotate(360deg); } }
+@keyframes lm_lshine { 0%, 45% { translate: -130% 0; } 75%, 100% { translate: 130% 0; } }
+@keyframes lm_lglow {
+    0%, 100% { filter: drop-shadow(0 0 2px color-mix(in srgb, var(--lm-laccent) 40%, transparent)); }
+    50% { filter: drop-shadow(0 0 10px var(--lm-laccent)) drop-shadow(0 0 3px var(--lm-laccent)); }
+}
+@keyframes lm_lshake {
+    0%, 60%, 100% { transform: rotate(0); }
+    65% { transform: rotate(-12deg); } 72% { transform: rotate(10deg); } 79% { transform: rotate(-7deg); } 86% { transform: rotate(4deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .lm_launch, .lm_launch *, .lm_launch *::after { animation: none !important; }
+}
+
+/* the alert dot: the emergency brake stepped in since Lore Master was last opened */
+.lm_lalert {
+    position: absolute; top: -3px; right: -3px; z-index: 1;
+    display: none; place-items: center;
+    min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; box-sizing: border-box;
+    background: #ef5b5f; color: #fff; font: 800 11px / 1 var(--mainFontFamily, sans-serif);
+    box-shadow: 0 0 0 2px var(--SmartThemeBlurTintColor, #1c1c22);
+    pointer-events: none;
+}
+.lm_launch[data-edge="right"] .lm_lalert { right: auto; left: -3px; }
+[data-alert="1"]:not(.lm_nobadge) > .lm_lalert, #lm_topbar[data-alert="1"]:not(.lm_nobadge) .lm_lalert { display: grid; }
+
+/* top-bar icon */
+#lm_topbar .drawer-toggle { position: relative; }
+#lm_topbar .lm_lalert { top: 0; right: -2px; }
+.lm_ticon[data-sized="1"] { font-size: var(--lm-tsize) !important; }
+.lm_ticon_face { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em; line-height: 1; }
+.lm_ticon_face img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.lm_ticon_face span { font-size: 0.85em; line-height: 1; }
+
+/* wand menu item / World Info panel button with an emoji */
+#lm_wand .lm_memoji, .lm_fakerow .lm_memoji { font-family: inherit; line-height: 1; display: inline-grid; place-items: center; }
+.lm_wiemoji { font-size: 1.05em; line-height: 1; }
+
 #lm_settings .lm_drawer_btns { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 #lm_settings .lm_drawer_btns .menu_button { width: fit-content; }
 
@@ -743,3 +851,70 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_oskip .lm_onew { opacity: 0.55; font-weight: 500; }
 #lm_root .lm_osmall { width: 32px; height: 32px; font-size: 13px; color: var(--lm-dim); }
 #lm_root .lm_group > summary .lm_osmall { margin: -4px -6px -4px 0; }
+
+/* ---------------------------------------------------------------- button look editor (look.js, v0.10) */
+#lm_root .lm_looksheet { max-height: 94%; height: 94%; padding-bottom: 0; }
+#lm_root .lm_lookhead { display: flex; align-items: center; gap: 6px; padding: 0 0 6px 0; }
+#lm_root .lm_lookhead .lm_sheet_title { display: flex; gap: 8px; align-items: center; }
+#lm_root .lm_lookhead .lm_sheet_title i { color: var(--lm-accent); }
+#lm_root .lm_looktabs { margin: 0 2px 8px; }
+#lm_root .lm_looktabs .lm_segbtn { padding: 0 4px; font-size: 13px; }
+#lm_root .lm_lookbody { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 4px calc(18px + env(safe-area-inset-bottom)); }
+#lm_root .lm_lookbody [hidden] { display: none !important; }
+
+/* the preview stays in view while the options scroll under it */
+#lm_root .lm_lookstage {
+    position: sticky; top: 0; z-index: 3;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    height: 128px; margin: 0 -4px 6px; border-radius: 14px;
+    background:
+        radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--lm-accent) 18%, transparent), transparent 60%),
+        repeating-conic-gradient(color-mix(in srgb, var(--lm-fg) 6%, transparent) 0 25%, transparent 0 50%) 0 0 / 18px 18px,
+        var(--SmartThemeChatTintColor, var(--SmartThemeBlurTintColor, #1c1c22));
+    border: 1px solid var(--lm-soft);
+    box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);   /* translucent themes: blur what scrolls under it */
+}
+#lm_root .lm_lookprev { cursor: default; }
+#lm_root .lm_lookstage_bar { height: 76px; }
+#lm_root .lm_lookstage_menu { height: auto; min-height: 76px; padding: 8px; flex-wrap: wrap; }
+#lm_root .lm_lookrow { margin: 10px 0; }
+#lm_root .lm_lookrow > .lm_label small { font-weight: 400; color: var(--lm-dim); }
+#lm_root .lm_lookgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 6px; }
+#lm_root .lm_lookgrid button {
+    height: 40px; display: grid; place-items: center; padding: 0;
+    border: 1px solid var(--lm-soft); border-radius: 10px; background: var(--lm-surface); color: var(--lm-fg);
+    font-size: 17px; cursor: pointer; transition: border-color 0.12s, background 0.12s;
+}
+#lm_root .lm_lookgrid button:hover { border-color: var(--lm-border); }
+#lm_root .lm_lookgrid button.lm_on { border-color: var(--lm-accent); color: var(--lm-accent); background: color-mix(in srgb, var(--lm-accent) 14%, transparent); box-shadow: 0 0 0 1px var(--lm-accent); }
+#lm_root .lm_shapeswatch { width: 20px; height: 20px; display: block; background: currentColor; }
+#lm_root .lm_lookpresets { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+#lm_root .lm_lookpresets .lm_btn { flex: none; min-height: 34px; padding: 4px 11px 4px 6px; font-size: 13px; border-radius: 999px; }
+#lm_root .lm_presetdot { width: 20px; height: 20px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25); }
+#lm_root .lm_lookimg { margin: 0; }
+#lm_root .lm_lookimg label.lm_btn { position: relative; }
+#lm_root .lm_lookcard { display: flex; flex-direction: column; gap: 6px; }
+#lm_root .lm_lookslider { display: grid; grid-template-columns: 6.5em 1fr 4em; gap: 10px; align-items: center; font-size: 13.5px; }
+#lm_root .lm_lookslider b { font-size: 12.5px; font-weight: 600; color: var(--lm-dim); text-align: right; font-variant-numeric: tabular-nums; }
+#lm_root .lm_lookline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13.5px; }
+#lm_root .lm_lookline > span { min-width: 6.5em; }
+#lm_root .lm_lookline > span small { color: var(--lm-dim); }
+#lm_root .lm_lookselect { width: auto; flex: 1; min-width: 140px; min-height: 36px; }
+#lm_root .lm_lookbody .lm_settings b small { display: inline; margin-left: 4px; font-weight: 400; }
+#lm_root .lm_lookbody .lm_warn { display: flex; align-items: center; gap: 8px; }
+#lm_root .lm_lookbody .lm_warn .lm_btn { margin-left: auto; min-height: 30px; padding: 3px 12px; }
+
+/* fake top bar / menu around the previews */
+#lm_root .lm_fakebar { display: flex; align-items: center; gap: 14px; padding: 6px 14px; border-radius: 12px; color: var(--SmartThemeBodyColor, #ddd); background: var(--SmartThemeBlurTintColor, #222); font-size: var(--topBarIconSize, 20px); }
+#lm_root .lm_fakeicon { opacity: 0.45; }
+#lm_root .lm_fakeslot { position: relative; display: grid; place-items: center; padding: 4px; border-radius: 10px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--lm-accent) 55%, transparent); }
+#lm_root .lm_fakeslot .lm_lalert { top: -6px; right: -6px; }
+#lm_root .lm_fakebar[data-alert="1"]:not(.lm_nobadge) .lm_lalert { display: grid; }
+#lm_root .lm_fakemenu { flex: 1 1 220px; max-width: 280px; padding: 4px; border-radius: 10px; background: var(--SmartThemeBlurTintColor, #222); color: var(--SmartThemeBodyColor, #ddd); font-size: 14px; }
+#lm_root .lm_fakerow { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; opacity: 0.45; }
+#lm_root .lm_fakerow.lm_fakehot { opacity: 1; background: color-mix(in srgb, var(--lm-accent) 14%, transparent); }
+#lm_root .lm_fakerow .extensionsMenuExtensionButton { width: 1.3em; text-align: center; }
+#lm_root .lm_fakewi { display: flex; gap: 6px; align-items: center; }
+#lm_root .lm_fakebtn { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; background: var(--SmartThemeBlurTintColor, #222); color: var(--SmartThemeBodyColor, #ddd); opacity: 0.45; }
+#lm_root .lm_fakehot .menu_button { margin: 0; width: 36px; height: 36px; display: grid; place-items: center; box-shadow: 0 0 0 2px color-mix(in srgb, var(--lm-accent) 55%, transparent); }

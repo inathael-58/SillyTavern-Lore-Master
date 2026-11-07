@@ -14,6 +14,7 @@
  *
  * Files: lib.js (pure logic) · store.js (SillyTavern data) · ui.js (toolkit, navigation)
  *        editor.js · doctor.js · settingsview.js (screens) · prefs.js (settings)
+ *        look.js (how the floating button, top-bar icon and menu items look, and their editor)
  */
 
 import {
@@ -27,12 +28,13 @@ import { viewLibrary, viewBook, viewEntry, enterBook, hooks, onFieldEvent, onFoc
 import { viewOrganize, onOrganizeToggle } from './organize.js';
 import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, translateBook, enterDoctor, onDoctorToggle } from './doctor.js';
 import { viewSettings } from './settingsview.js';
+import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './look.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.9.1'; // keep in sync with manifest.json
+const VERSION = '0.10.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
-const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'style.css', 'manifest.json'];
+const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'style.css', 'manifest.json'];
 const W = St.WIref;
 
 hooks.checkBook = checkBook;
@@ -129,6 +131,7 @@ function render() {
     const nav = [['books', 'fa-book', 'เล่ม'], ['doctor', 'fa-stethoscope', 'ตรวจ & รวม'], ['settings', 'fa-gear', 'ตั้งค่า']];
     root.dataset.scheme = settings().scheme;
     root.dataset.view = UI.tab === 'books' ? v.v : UI.tab;
+    const lookLayer = root.querySelector('.lm_lookl');   // the button editor stays open over a background re-draw
     root.innerHTML = `
     <div class="lm_panel">
       <header class="lm_head">
@@ -145,6 +148,7 @@ function render() {
         <button class="lm_navbtn ${UI.tab === t ? 'lm_on' : ''}" data-act="nav" data-tab="${t}">${icon(ic)}<span>${label}</span></button>`).join('')}
       </nav>
     </div>`;
+    if (lookLayer) root.append(lookLayer);
     const nb = root.querySelector('.lm_body');
     if (key !== lastKey) nb.querySelector('.lm_view')?.classList.add('lm_enter');
     nb.scrollTop = UI.scroll.get(key) ?? 0;
@@ -164,6 +168,7 @@ export function openLM(stack = null, tab = null) {
     if (tab) UI.tab = tab;
     const was = UI.open;
     UI.open = true;
+    setAlert(false);
     root.classList.add('lm_open');
     document.documentElement.classList.add('lm_noscroll');
     fitViewport();
@@ -227,32 +232,52 @@ function placeLauncher(el = document.getElementById('lm_launcher')) {
     if (p.edge === 'bottom') top_ = vh - h - m;
     el.style.left = `${Math.round(ox + left)}px`;
     el.style.top = `${Math.round(oy + top_)}px`;
+    el.dataset.edge = p.edge ?? '';   // a chat-bubble tail points at the edge it sits on
+}
+shell.placeLauncher = placeLauncher;
+/** Place again now and once the on-screen keyboard has finished sliding (iOS reports the size late). */
+let placeTimer = null;
+function placeLauncherSoon() {
+    requestAnimationFrame(() => placeLauncher());
+    clearTimeout(placeTimer);
+    placeTimer = setTimeout(() => placeLauncher(), 350);
+}
+/** Open Lore Master on the button editor (long-press on the floating button, the Extensions panel, LoreMaster.customize). */
+function openCustomize(tab = 'launch') {
+    openLM(null, 'settings');
+    openLookEditor(tab);
 }
 function renderLauncher() {
     let el = document.getElementById('lm_launcher');
     if (!settings().launcher) { el?.remove(); return; }
-    if (el) return placeLauncher(el);
+    if (el) { applyLaunch(el); return placeLauncher(el); }
     el = document.createElement('div');
     el.id = 'lm_launcher';
     el.setAttribute('role', 'button');
     el.tabIndex = 0;
-    el.title = 'Lore Master — lorebook';
-    el.innerHTML = icon('fa-book-atlas');
+    el.title = 'Lore Master — แตะเพื่อเปิด · ลากเพื่อย้าย · กดค้างเพื่อแต่งปุ่ม';
+    el.setAttribute('aria-label', 'Lore Master');
+    applyLaunch(el);
     document.body.append(el);
     el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFromContext(); } });
-    let start = null, moved = false;
+    el.addEventListener('contextmenu', e => e.preventDefault());   // a long press is ours, not the browser's menu
+    let start = null, moved = false, longTimer = null, longDone = false;
     el.addEventListener('pointerdown', e => {
         if (e.button !== 0) return;
         const r = el.getBoundingClientRect();
         start = { x: e.clientX, y: e.clientY, left: r.left, top: r.top, id: e.pointerId };
         moved = false;
+        longDone = false;
+        clearTimeout(longTimer);
+        longTimer = setTimeout(() => { if (start && !moved) { longDone = true; openCustomize('launch'); } }, 650);
         try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     });
     el.addEventListener('pointermove', e => {
-        if (!start || e.pointerId !== start.id) return;
+        if (!start || e.pointerId !== start.id || longDone) return;
         const dx = e.clientX - start.x, dy = e.clientY - start.y;
         if (!moved && Math.hypot(dx, dy) < 6) return;
         moved = true;
+        clearTimeout(longTimer);
         el.classList.add('lm_dragging');
         const a = visibleArea();
         el.style.left = `${clamp(start.left + dx, a.x, a.x + a.w - el.offsetWidth)}px`;
@@ -261,6 +286,8 @@ function renderLauncher() {
     const end = e => {
         if (!start || e.pointerId !== start.id) return;
         start = null;
+        clearTimeout(longTimer);
+        if (longDone) return;
         if (!moved) { if (e.type === 'pointerup') openFromContext(); return; }
         el.classList.remove('lm_dragging');
         const { x: ox, y: oy, w: vw, h: vh } = visibleArea();
@@ -276,48 +303,55 @@ function renderLauncher() {
     el.addEventListener('pointercancel', end);
     placeLauncher(el);
 }
-window.addEventListener('resize', () => placeLauncher());
-window.visualViewport?.addEventListener('resize', () => placeLauncher());
+// keep the button on the visible part of the screen, also while the on-screen keyboard is open
+window.addEventListener('resize', placeLauncherSoon);
+window.visualViewport?.addEventListener('resize', placeLauncherSoon);
+window.visualViewport?.addEventListener('scroll', () => placeLauncher());
+document.addEventListener('focusin', placeLauncherSoon);
+document.addEventListener('focusout', placeLauncherSoon);
 
 function renderTopbar() {
     let el = document.getElementById('lm_topbar');
     if (!settings().topbar) { el?.remove(); return; }
-    if (el) return;
+    if (el) return applyTop(el);
     const holder = document.getElementById('top-settings-holder');
     if (!holder) return;
     el = document.createElement('div');
     el.id = 'lm_topbar';
     el.className = 'drawer';
-    el.innerHTML = `<div class="drawer-toggle"><div class="drawer-icon fa-solid fa-book-bookmark fa-fw closedIcon interactable" title="Lore Master" tabindex="0"></div></div>`;
+    el.innerHTML = '<div class="drawer-toggle"><div class="lm_ticon" title="Lore Master" tabindex="0"></div></div>';
     const before = document.getElementById('rightNavHolder');
     if (before?.parentElement === holder) holder.insertBefore(el, before); else holder.append(el);
     el.addEventListener('click', e => { e.stopPropagation(); openFromContext(); }, true);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') openFromContext(); });
+    applyTop(el);
 }
 
 function renderWand() {
     let el = document.getElementById('lm_wand');
     if (!settings().wand) { el?.remove(); return; }
     const menu = document.getElementById('extensionsMenu');
-    if (!menu || el) return;
+    if (!menu) return;
+    if (el) return applyMenu(el, null);
     el = document.createElement('div');
     el.id = 'lm_wand';
     el.className = 'list-group-item flex-container flexGap5 interactable';
     el.tabIndex = 0;
-    el.innerHTML = '<div class="fa-solid fa-book-atlas extensionsMenuExtensionButton"></div><span>Lore Master</span>';
     el.addEventListener('click', () => openFromContext());
     menu.append(el);
+    applyMenu(el, null);
 }
 
 function renderWiButton() {
     const old = document.getElementById('lm_wi_btn');
     if (!settings().stPanelButton) { old?.remove(); return; }
-    if (old) return;
+    if (old) return applyMenu(null, old);
     const anchor = document.getElementById('world_import_button');
     if (!anchor) return;
     const b = document.createElement('div');
     b.id = 'lm_wi_btn';
-    b.className = 'menu_button fa-solid fa-book-bookmark';
     b.title = 'เปิดใน Lore Master';
+    applyMenu(null, b);
     b.addEventListener('click', () => {
         const sel = document.getElementById('world_editor_select');
         const name = sel && sel.value !== '' ? sel.options[sel.selectedIndex]?.text ?? '' : '';
@@ -553,6 +587,7 @@ function guardAfterLoop(args, map) {
 function trip(info) {
     lastTrip = { ...info, at: Date.now(), chat: St.ctx().chatId ?? '' };
     console.warn(LOG, 'emergency brake', lastTrip);
+    if (!UI.open) setAlert(true);
     const key = `${lastTrip.chat}|${info.book}|${info.kind}`;
     if (tripShown.has(key)) return;
     tripShown.add(key);
@@ -626,6 +661,7 @@ function mountSettings() {
           <div class="menu_button" data-lm="books"><i class="fa-solid fa-book-atlas"></i> เปิด Lore Master</div>
           <div class="menu_button" data-lm="doctor"><i class="fa-solid fa-stethoscope"></i> ตรวจ & รวม</div>
           <div class="menu_button" data-lm="settings"><i class="fa-solid fa-gear"></i> ตั้งค่า</div>
+          <div class="menu_button" data-lm-look><i class="fa-solid fa-palette"></i> แต่งหน้าตาปุ่ม</div>
           <div class="menu_button" data-lm-reload title="ดึงไฟล์ของ Lore Master จากเซิร์ฟเวอร์ใหม่ทั้งหมดแล้วโหลดหน้าใหม่"><i class="fa-solid fa-rotate"></i> โหลดเวอร์ชันล่าสุด</div>
         </div>
         <div class="lm_verline">ที่รันอยู่: <b>v${VERSION}</b> <span data-lm-remote></span></div>
@@ -635,6 +671,7 @@ function mountSettings() {
     host.appendChild(div);
     div.addEventListener('click', e => {
         if (e.target.closest('[data-lm-reload]')) return reloadWithFreshFiles();
+        if (e.target.closest('[data-lm-look]')) return openCustomize();
         const t = e.target.closest('[data-lm]');
         if (t) openLM(null, t.dataset.lm);
     });
@@ -757,6 +794,6 @@ function registerCommands() {
     setTimeout(() => checkForNewVersion(), 3000);
     if (E.CHAT_CHANGED) eventSource.on(E.CHAT_CHANGED, () => checkForNewVersion());
     setInterval(() => { if (!document.getElementById('lm_wand') && settings().wand) renderWand(); if (!document.getElementById('lm_wi_btn') && settings().stPanelButton) renderWiButton(); }, 4000);
-    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), openEntry, version: VERSION, lastCut: () => lastCut, fired: firedIn, lastTrip: () => lastTrip, glossary: () => glossLines, remote: () => remoteVersion, isStale: () => !!remoteVersion && newer(remoteVersion, VERSION), status: () => ({ ...status, events: { before: !!E.WORLDINFO_ENTRIES_LOADED, after: !!E.WORLDINFO_SCAN_DONE } }) };
+    globalThis.LoreMaster = { open: openLM, openBook: name => openLM([{ v: 'book', name }]), openEntry, customize: openCustomize, version: VERSION, lastCut: () => lastCut, fired: firedIn, lastTrip: () => lastTrip, glossary: () => glossLines, remote: () => remoteVersion, isStale: () => !!remoteVersion && newer(remoteVersion, VERSION), status: () => ({ ...status, events: { before: !!E.WORLDINFO_ENTRIES_LOADED, after: !!E.WORLDINFO_SCAN_DONE } }) };
     console.log(LOG, `v${VERSION} ready`);
 })();

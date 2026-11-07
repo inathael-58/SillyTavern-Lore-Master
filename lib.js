@@ -1582,3 +1582,129 @@ export function wouldFire(entries, text, { names = {}, caseSensitive = false, wh
     }
     return out;
 }
+
+// ================================================================ entry point looks
+//
+// How the floating button, the top-bar icon and the menu items look. Stored in the extension's
+// settings; these only describe and clean a look, look.js draws it.
+
+export const LAUNCH_SHAPES = ['rounded', 'circle', 'bubble', 'pill', 'hexagon', 'shield', 'heart', 'flower', 'star', 'cloud', 'sticker'];
+export const LAUNCH_BGS = ['gradient', 'glass', 'accent', 'custom', 'custom2', 'none'];
+export const LAUNCH_FGS = ['auto', 'theme', 'custom'];
+export const LAUNCH_ANIMS = ['none', 'float', 'sway', 'pulse', 'spin', 'glow', 'shimmer', 'alert'];
+
+/** The floating button. The defaults draw it exactly as before it could be styled. */
+export const LAUNCH_DEFAULT = Object.freeze({
+    shape: 'rounded',
+    icon: 'fa-book-atlas',
+    emoji: '',          // overrides the icon
+    image: '',          // data: URL or https link; overrides icon and emoji
+    fit: 'cover',       // cover | contain
+    size: 48,           // px
+    iconSize: 44,       // % of the button
+    bg: 'gradient',     // see LAUNCH_BGS
+    bgColor: '#7a4bd6',
+    bgColor2: '#e18a24',
+    fg: 'auto',         // auto: white on colour, theme colour on glass / none
+    fgColor: '#ffffff',
+    border: false,
+    shadow: true,
+    anim: 'none',
+    opacity: 88,        // % while not touched
+    label: 'Lore',      // pill only
+    badge: true,        // red dot when the emergency brake stepped in
+});
+
+/** The icon in ST's top bar. */
+export const TOP_DEFAULT = Object.freeze({
+    icon: 'fa-book-bookmark',
+    emoji: '',
+    image: '',
+    size: 0,            // px; 0 = the theme's own size
+    color: 'theme',     // theme | custom
+    colorHex: '#e18a24',
+    opacity: 100,
+    badge: true,
+});
+
+/** The wand menu item and the small button inside ST's World Info panel. */
+export const MENU_DEFAULT = Object.freeze({
+    icon: 'fa-book-atlas',
+    emoji: '',
+    label: 'Lore Master',  // wand menu only
+    color: 'theme',        // theme | custom
+    colorHex: '#e18a24',
+    wiIcon: 'fa-book-bookmark',
+    wiEmoji: '',
+});
+
+const LOOK_HEX = /^#[0-9a-f]{6}$/i;
+const lookNum = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : d; };
+const lookOneOf = (v, list, d) => (list.includes(v) ? v : d);
+const lookFa = (v, d) => (typeof v === 'string' && /^fa-[a-z0-9-]+$/.test(v) ? v : d);
+const lookHex = (v, d) => (typeof v === 'string' && LOOK_HEX.test(v) ? v.toLowerCase() : d);
+/** The emoji field, at most 8 characters (one ZWJ emoji, or a few simple ones). */
+export const cleanEmoji = v => Array.from(String(v ?? '').trim()).slice(0, 8).join('');
+/** A picture for a button: a data:image URL or an http(s) link, nothing else (no javascript:, no CSS breakouts). */
+export function cleanImage(v) {
+    const s = String(v ?? '').trim();
+    if (/^data:image\/(png|jpe?g|gif|webp|svg\+xml|avif);base64,[a-z0-9+/=\s]+$/i.test(s)) return s;
+    if (/^https?:\/\/[^\s"'<>()\\]+$/i.test(s)) return s;
+    return '';
+}
+
+/** A complete, safe floating-button look from whatever is stored (missing / broken fields fall back). */
+export function normLaunchLook(raw) {
+    const r = raw && typeof raw === 'object' ? raw : {};
+    const d = LAUNCH_DEFAULT;
+    return {
+        shape: lookOneOf(r.shape, LAUNCH_SHAPES, d.shape),
+        icon: lookFa(r.icon, d.icon),
+        emoji: cleanEmoji(r.emoji),
+        image: cleanImage(r.image),
+        fit: lookOneOf(r.fit, ['cover', 'contain'], d.fit),
+        size: lookNum(r.size, 28, 140, d.size),
+        iconSize: lookNum(r.iconSize, 20, 100, d.iconSize),
+        bg: lookOneOf(r.bg, LAUNCH_BGS, d.bg),
+        bgColor: lookHex(r.bgColor, d.bgColor),
+        bgColor2: lookHex(r.bgColor2, d.bgColor2),
+        fg: lookOneOf(r.fg, LAUNCH_FGS, d.fg),
+        fgColor: lookHex(r.fgColor, d.fgColor),
+        border: r.border === undefined ? d.border : !!r.border,
+        shadow: r.shadow === undefined ? d.shadow : !!r.shadow,
+        anim: lookOneOf(r.anim, LAUNCH_ANIMS, d.anim),
+        opacity: lookNum(r.opacity, 20, 100, d.opacity),
+        label: String(r.label ?? d.label).slice(0, 16),
+        badge: r.badge === undefined ? d.badge : !!r.badge,
+    };
+}
+
+export function normTopLook(raw) {
+    const r = raw && typeof raw === 'object' ? raw : {};
+    const d = TOP_DEFAULT;
+    const size = Number(r.size) || 0;
+    return {
+        icon: lookFa(r.icon, d.icon),
+        emoji: cleanEmoji(r.emoji),
+        image: cleanImage(r.image),
+        size: size ? lookNum(size, 12, 64, 0) : 0,
+        color: lookOneOf(r.color, ['theme', 'custom'], d.color),
+        colorHex: lookHex(r.colorHex, d.colorHex),
+        opacity: lookNum(r.opacity, 20, 100, d.opacity),
+        badge: r.badge === undefined ? d.badge : !!r.badge,
+    };
+}
+
+export function normMenuLook(raw) {
+    const r = raw && typeof raw === 'object' ? raw : {};
+    const d = MENU_DEFAULT;
+    return {
+        icon: lookFa(r.icon, d.icon),
+        emoji: cleanEmoji(r.emoji),
+        label: String(r.label ?? '').trim().slice(0, 30) || d.label,
+        color: lookOneOf(r.color, ['theme', 'custom'], d.color),
+        colorHex: lookHex(r.colorHex, d.colorHex),
+        wiIcon: lookFa(r.wiIcon, d.wiIcon),
+        wiEmoji: cleanEmoji(r.wiEmoji),
+    };
+}

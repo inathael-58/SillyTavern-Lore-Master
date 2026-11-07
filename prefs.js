@@ -14,6 +14,10 @@ export const DEFAULTS = {
     launcherPos: { x: 1, y: 0.62, edge: 'right' },
     topbar: false,               // icon in the top bar (off: the World Info button already opens Lore Master)
     wand: true,                  // item in the Extensions (wand) menu
+    // how the entry points look (look.js); only what was changed is stored, lib.js fills the rest
+    launcherLook: {},
+    topbarLook: {},
+    menuLook: {},
     scheme: 'theme',             // theme | light | dark
     /** @type {Record<string, number>} book -> max entries per turn */
     caps: {},
@@ -49,6 +53,7 @@ export function settings() {
     all[MODULE] = Object.assign({}, structuredClone(DEFAULTS), cur);
     if (!all[MODULE].caps || typeof all[MODULE].caps !== 'object') all[MODULE].caps = {};
     if (!all[MODULE].launcherPos || typeof all[MODULE].launcherPos !== 'object') all[MODULE].launcherPos = { ...DEFAULTS.launcherPos };
+    for (const k of ['launcherLook', 'topbarLook', 'menuLook']) if (!all[MODULE][k] || typeof all[MODULE][k] !== 'object') all[MODULE][k] = {};
     return all[MODULE];
 }
 export const save = () => SillyTavern.getContext().saveSettingsDebounced();
