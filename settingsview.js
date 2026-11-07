@@ -8,6 +8,7 @@ import { settings, save, DEFAULTS } from './prefs.js';
 import { esc, icon, act, shell, sheet, toast, switchHtml, rangeHtml, paintRange, valboxInput } from './ui.js';
 import { aiSettings, profiles, memoryHubSources, copyFromMemoryHub, ask, lastCall, TASKS, usedToday, sourceLabel } from './ai.js';
 import { nameCache, clearNameCache } from './cache.js';
+import { openLookEditor } from './look.js';
 
 const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric: true });
 
@@ -50,13 +51,15 @@ export function viewSettings() {
 
         <h3 class="lm_h">${icon('fa-door-open')} ทางเข้า Lore Master</h3>
         <div class="lm_card lm_settings">
-          ${prefRow('launcher', 'ปุ่มลอย', 'ลากไปวางตรงไหนก็ได้ ดูดติดขอบ เก็บเข้า Quick Dock ได้ (เลือกปุ่มบนจอ)')}
+          ${prefRow('launcher', 'ปุ่มลอย', 'ลากไปวางตรงไหนก็ได้ ดูดติดขอบ กดค้างเพื่อแต่งปุ่ม เก็บเข้า Quick Dock ได้ (เลือกปุ่มบนจอ)')}
           ${prefRow('topbar', 'ไอคอนบนแถบด้านบน', s.replaceWorldInfo ? 'ตอนนี้ปุ่ม World Info ของ ST เปิด Lore Master อยู่แล้ว ไม่ต้องเปิดอันนี้ก็ได้' : 'ไอคอนแยกของ Lore Master ข้างปุ่ม World Info ของ ST')}
           ${prefRow('wand', 'เมนูไม้กายสิทธิ์ (Extensions)', '')}
           <div class="lm_hint">พิมพ์ <code>/lore</code> หรือ <code>/lore ชื่อเล่ม</code> ได้เสมอ ใช้ทำปุ่มใน Quick Reply / Quick Dock ได้ · ปุ่ม “เปิดใน lorebook” ของ Lore Lens เปิดเอนทรีที่นี่ (ปิดได้ในการตั้งค่าของ Lore Lens)</div>
           <div class="lm_row lm_wrap">
+            <button class="lm_btn lm_primary" data-act="s-look">${icon('fa-palette')} แต่งหน้าตาปุ่ม</button>
             <button class="lm_btn" data-act="s-resetpos">${icon('fa-arrows-to-dot')} รีเซ็ตตำแหน่งปุ่มลอย</button>
           </div>
+          <div class="lm_hint">แต่งรูปทรง ไอคอน อีโมจิ รูปภาพ สี ขนาด และการเคลื่อนไหวของปุ่มลอย ไอคอนแถบด้านบน และเมนู · หรือกดค้างที่ปุ่มลอย</div>
         </div>
 
         <h3 class="lm_h">${icon('fa-palette')} หน้าตา</h3>
@@ -253,6 +256,7 @@ act('click', {
         if (name) { St.setGlobal(name, true); shell.render(); }
     },
     's-scheme': el => { settings().scheme = el.dataset.v; save(); shell.applyScheme?.(); shell.render(); },
+    's-look': () => openLookEditor(),
     's-resetpos': () => { settings().launcherPos = { ...DEFAULTS.launcherPos }; settings().launcher = true; save(); shell.refreshEntryPoints?.(); shell.render(); },
     's-stwi': () => shell.openStWorldInfo?.(),
     's-wimode': el => {

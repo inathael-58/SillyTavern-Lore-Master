@@ -8,6 +8,7 @@ import {
     isGlossary, pickGlossary, condenseRequest, cleanCondensed, LONG_TOKENS,
     textLanguage, entryLanguage, wantsTranslation, translateRequest, parseTranslation, applyTranslation, namesFor,
     keyScanner, trimToLimits, wouldFire, cardFromPng, keyPlan,
+    LAUNCH_DEFAULT, normLaunchLook, normTopLook, normMenuLook, cleanImage, cleanEmoji,
 } from '../lib.js';
 
 /** A JanitorAI export entry, with the fields their files carry. */
@@ -637,4 +638,59 @@ test('translate: applying swaps keys but keeps Thai, English and regex keys', ()
     assert.deepEqual(applyTranslation(e, tr, { keepKeys: true }).key, ['Kim Minjun', 'Minjun', '김민준', 'มินจุน', '/민준|준이/']);
     assert.deepEqual(applyTranslation({ ...e, keysecondary: [] }, tr).keysecondary, [], 'no secondary keys added where there were none');
     assert.deepEqual(e.key, ['김민준', 'มินจุน', 'Minjun', '/민준|준이/'], 'the original is not changed');
+});
+
+test('normLaunchLook: nothing stored draws the original button', () => {
+    assert.deepEqual(normLaunchLook(undefined), { ...LAUNCH_DEFAULT });
+    assert.deepEqual(normLaunchLook({}), { ...LAUNCH_DEFAULT });
+    assert.deepEqual(normLaunchLook('junk'), { ...LAUNCH_DEFAULT });
+});
+
+test('normLaunchLook keeps good values and replaces broken ones', () => {
+    const L = normLaunchLook({ shape: 'hexagon', icon: 'fa-gem', size: 500, iconSize: 3, opacity: '50', bg: 'custom2', bgColor: '#ABCDEF', bgColor2: 'red', anim: 'shimmer', border: 0, badge: false, label: 'x'.repeat(40) });
+    assert.equal(L.shape, 'hexagon');
+    assert.equal(L.icon, 'fa-gem');
+    assert.equal(L.size, 140);
+    assert.equal(L.iconSize, 20);
+    assert.equal(L.opacity, 50);
+    assert.equal(L.bgColor, '#abcdef');
+    assert.equal(L.bgColor2, LAUNCH_DEFAULT.bgColor2);
+    assert.equal(L.anim, 'shimmer');
+    assert.equal(L.border, false);
+    assert.equal(L.badge, false);
+    assert.equal(L.label.length, 16);
+    const bad = normLaunchLook({ shape: 'triangle', icon: 'fa-x" onerror="1', bg: 'url(x)', fg: 'nope', anim: 'explode', fit: 'stretch', size: 'big' });
+    assert.equal(bad.shape, LAUNCH_DEFAULT.shape);
+    assert.equal(bad.icon, LAUNCH_DEFAULT.icon);
+    assert.equal(bad.bg, LAUNCH_DEFAULT.bg);
+    assert.equal(bad.fg, LAUNCH_DEFAULT.fg);
+    assert.equal(bad.anim, LAUNCH_DEFAULT.anim);
+    assert.equal(bad.fit, LAUNCH_DEFAULT.fit);
+    assert.equal(bad.size, LAUNCH_DEFAULT.size);
+});
+
+test('cleanImage takes data: pictures and plain https links only', () => {
+    assert.equal(cleanImage('data:image/png;base64,iVBORw0KGgo='), 'data:image/png;base64,iVBORw0KGgo=');
+    assert.equal(cleanImage(' https://example.com/a.gif '), 'https://example.com/a.gif');
+    assert.equal(cleanImage('javascript:alert(1)'), '');
+    assert.equal(cleanImage('https://x.com/a.png") ; background:url("y'), '');
+    assert.equal(cleanImage('data:text/html;base64,PHA+'), '');
+    assert.equal(cleanImage(null), '');
+});
+
+test('cleanEmoji keeps whole characters, at most 8', () => {
+    assert.equal(cleanEmoji('  📖 '), '📖');
+    assert.equal(Array.from(cleanEmoji('🐱🐱🐱🐱🐱🐱🐱🐱🐱🐱')).length, 8);
+    assert.equal(cleanEmoji(undefined), '');
+});
+
+test('normTopLook and normMenuLook fill and clamp', () => {
+    assert.equal(normTopLook({}).size, 0);
+    assert.equal(normTopLook({ size: 200 }).size, 64);
+    assert.equal(normTopLook({ size: 5 }).size, 12);
+    assert.equal(normTopLook({ color: 'custom', colorHex: '#123456' }).colorHex, '#123456');
+    const M = normMenuLook({ label: '   ', wiIcon: 'fa-key', icon: '<b>' });
+    assert.equal(M.label, 'Lore Master');
+    assert.equal(M.wiIcon, 'fa-key');
+    assert.equal(M.icon, 'fa-book-atlas');
 });
