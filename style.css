@@ -28,7 +28,10 @@
     left: 0;
     right: 0;
     top: 0;
-    height: 100%;
+    /* viewport units, not 100%: with a transform/perspective on <html> (themes, other extensions) iPhone browsers
+     * size a fixed box against <html>, which can be 0 tall. fitViewport() also sets a px height when opening. */
+    height: 100vh;
+    height: 100dvh;
     z-index: 10050;
     background: rgba(0, 0, 0, 0.5);
     color: var(--lm-fg);

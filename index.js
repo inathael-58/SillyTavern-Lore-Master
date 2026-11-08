@@ -31,7 +31,7 @@ import { viewSettings } from './settingsview.js';
 import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './look.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.10.2'; // keep in sync with manifest.json
+const VERSION = '0.10.3'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'style.css', 'manifest.json'];
@@ -261,13 +261,22 @@ function renderLauncher() {
     document.body.append(el);
     el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFromContext(); } });
     el.addEventListener('contextmenu', e => e.preventDefault());   // a long press is ours, not the browser's menu
-    let start = null, moved = false, longTimer = null, longDone = false;
+    let start = null, moved = false, longTimer = null, longDone = false, skipClick = false;
+    // Open on click, not pointerup: opened on pointerup, Lore Master appears under the finger and the click
+    // that follows the same tap presses whatever is there (the + button opened "add book" by itself).
+    el.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (skipClick) { skipClick = false; return; } // the click that ends a drag or a long press
+        openFromContext();
+    });
     el.addEventListener('pointerdown', e => {
         if (e.button !== 0) return;
         const r = el.getBoundingClientRect();
         start = { x: e.clientX, y: e.clientY, left: r.left, top: r.top, id: e.pointerId };
         moved = false;
         longDone = false;
+        skipClick = false;
         clearTimeout(longTimer);
         longTimer = setTimeout(() => { if (start && !moved) { longDone = true; openCustomize('launch'); } }, 650);
         try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
@@ -287,8 +296,9 @@ function renderLauncher() {
         if (!start || e.pointerId !== start.id) return;
         start = null;
         clearTimeout(longTimer);
-        if (longDone) return;
-        if (!moved) { if (e.type === 'pointerup') openFromContext(); return; }
+        if (longDone) { skipClick = true; return; }
+        if (!moved) return; // a plain tap: the click handler opens Lore Master
+        skipClick = true;
         el.classList.remove('lm_dragging');
         const { x: ox, y: oy, w: vw, h: vh } = visibleArea();
         const b = el.getBoundingClientRect();
