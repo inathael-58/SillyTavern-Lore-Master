@@ -29,12 +29,26 @@ import { viewOrganize, onOrganizeToggle } from './organize.js';
 import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, translateBook, enterDoctor, onDoctorToggle } from './doctor.js';
 import { viewSettings } from './settingsview.js';
 import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './look.js';
+import { createDiagnostics } from './diagnostics.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.10.3'; // keep in sync with manifest.json
+const VERSION = '0.10.4'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
-const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'style.css', 'manifest.json'];
+const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'style.css', 'manifest.json'];
+
+// Extensions > Lore Master > Diagnose (and /lore-debug): opens Lore Master, measures it, reports.
+const DIAG = createDiagnostics({
+    name: 'Lore Master',
+    version: VERSION,
+    baseUrl: BASE_URL,
+    open: () => openLM(),
+    close: () => closeLM(),
+    isOpen: () => UI.open,
+    overlay: () => document.getElementById('lm_root'),
+    frame: () => document.querySelector('#lm_root .lm_panel'),
+    state: () => `tab=${UI.tab} launcher=${settings().launcher} pos=${JSON.stringify(settings().launcherPos ?? null)}`,
+});
 const W = St.WIref;
 
 hooks.checkBook = checkBook;
@@ -167,6 +181,7 @@ export function openLM(stack = null, tab = null) {
     if (stack) { UI.tab = 'books'; UI.stack = [{ v: 'library' }, ...stack]; }
     if (tab) UI.tab = tab;
     const was = UI.open;
+    if (!was) DIAG.noteOpen(tab ?? '');
     UI.open = true;
     setAlert(false);
     root.classList.add('lm_open');
@@ -180,6 +195,7 @@ export function openLM(stack = null, tab = null) {
 let lastClosedAt = 0;
 function closeLM() {
     if (!UI.open) return;
+    DIAG.noteClose();
     lastClosedAt = Date.now();
     St.flush();
     UI.open = false;
@@ -679,6 +695,7 @@ function mountSettings() {
       </div>
     </div>`;
     host.appendChild(div);
+    DIAG.mount(div.querySelector('.lm_drawer_btns'), div.querySelector('.lm_verline'));
     div.addEventListener('click', e => {
         if (e.target.closest('[data-lm-reload]')) return reloadWithFreshFiles();
         if (e.target.closest('[data-lm-look]')) return openCustomize();
@@ -764,6 +781,7 @@ function registerCommands() {
             props.unnamedArgumentList = [SlashCommandArgument.fromProps({ description: 'ชื่อเล่ม (ไม่ใส่ก็ได้)', typeList: [ARGUMENT_TYPE.STRING], isRequired: false })];
         }
         SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'lore', aliases: ['loremaster', 'lm'], ...props }));
+        DIAG.registerCommand(St.ctx(), 'lore-debug');
     } catch (e) { console.warn(LOG, 'slash command', e); }
 }
 
