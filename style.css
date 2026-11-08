@@ -36,6 +36,11 @@
     line-height: 1.45;
     -webkit-tap-highlight-color: transparent;
 }
+/* Text on a solid accent: black on a light accent, white on a dark one (browsers without
+ * relative colours keep the fixed dark colour above). */
+@supports (color: oklch(from red l c h)) {
+    #lm_root { --lm-on-accent: oklch(from var(--lm-accent) clamp(0, (0.66 - l) * 1000, 1) 0 0); }
+}
 #lm_root[data-scheme="light"] {
     --lm-fg: #23232b;
     --lm-bg: #f6f4f1;
@@ -85,8 +90,11 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 }
 #lm_root .lm_logo {
     width: 34px; height: 34px; flex: none; display: grid; place-items: center;
-    border-radius: 10px; color: var(--lm-on-accent); font-size: 16px;
+    border-radius: 10px; color: #fff; font-size: 16px;
     background: linear-gradient(135deg, var(--lm-accent), color-mix(in srgb, var(--lm-accent) 60%, #b04bd6));
+    /* white icon with a soft shadow reads on any accent, light or dark */
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 3px 10px color-mix(in srgb, var(--lm-accent) 30%, transparent);
 }
 #lm_root .lm_headtext { flex: 1; min-width: 0; padding: 0 4px; }
 #lm_root .lm_htitle { font-weight: 700; font-size: 15.5px; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
