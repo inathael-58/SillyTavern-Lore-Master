@@ -12,7 +12,7 @@
 
 import { LAUNCH_DEFAULT, TOP_DEFAULT, MENU_DEFAULT, normLaunchLook, normTopLook, normMenuLook } from './lib.js';
 import { settings, save } from './prefs.js';
-import { esc, icon, shell, toast, rangeHtml, switchHtml, promptBox } from './ui.js';
+import { esc, icon, shell, toast, rangeHtml, switchHtml, promptBox, valboxInput, paintRange } from './ui.js';
 
 // ---------------------------------------------------------------- catalogue
 
@@ -169,8 +169,13 @@ const COLOR_STYLE = ['-webkit-appearance:none', 'appearance:none', 'flex:none', 
 const colorInput = (k, v, hidden = false) => `<input type="color" data-k="${k}" value="${esc(v)}" style="${COLOR_STYLE}"${hidden ? ' hidden' : ''} aria-label="เลือกสี">`;
 const opts = (list, cur) => list.map(([v, t]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${esc(t)}</option>`).join('');
 const select = (k, list, cur) => `<select class="lm_input lm_lookselect" data-k="${k}">${opts(list, cur)}</select>`;
-const slider = (k, label, v, min, max, unit = '') => `
-    <div class="lm_lookslider"><span>${label}</span>${rangeHtml(`data-k="${k}" aria-label="${esc(label)}"`, v, min, max)}<b data-val="${k}">${v}${unit}</b></div>`;
+/** A slider with a number box beside it that can be read and typed into. `num` names the box when it shows
+ *  something else than the slider's own value (icon size: stored as % of the button, shown and typed in px). */
+const slider = (k, label, v, min, max, unit = '', num = { key: k, v, min, max }) => `
+    <div class="lm_lookslider"><span>${label}</span>${rangeHtml(`data-k="${k}" aria-label="${esc(label)}"`, v, min, max)}<label class="lm_valbox">${valboxInput(`data-num="${num.key}" aria-label="${esc(label)}"`, num.v, num.min, num.max)}<span>${unit}</span></label></div>`;
+/** The icon size the floating button is drawn at, in px (same sum as applyLaunch). */
+const iconPx = L => Math.round((Number(L.size) || 48) * (Number(L.iconSize) || 42) / 100);
+const iconPxNum = L => ({ key: 'iconPx', v: iconPx(L), min: Math.round(L.size * 0.2), max: Number(L.size) || 48 });
 const toggle = (k, label, v) => `<div class="lm_setrow"><div class="lm_grow"><b>${label}</b></div>${switchHtml(`data-k="${k}"`, v)}</div>`;
 const iconGrid = (group, cur, active) => `<div class="lm_lookgrid">${ICONS.map(v =>
     `<button type="button" data-pick="${group}" data-v="${v}" class="${active && v === cur ? 'lm_on' : ''}" title="${v.slice(3)}" aria-label="${v.slice(3)}">${icon(v)}</button>`).join('')}</div>`;
@@ -208,9 +213,9 @@ function launchHtml() {
     ${imageRow('launch', L)}
     <div class="lm_card lm_lookcard">
       ${slider('size', 'ขนาด', L.size, 28, 140, 'px')}
-      ${slider('iconSize', 'ขนาดไอคอน', L.iconSize, 20, 100, '%')}
+      ${slider('iconSize', 'ขนาดไอคอน', L.iconSize, 20, 100, 'px', iconPxNum(L))}
       ${slider('opacity', 'ความทึบ', L.opacity, 20, 100, '%')}
-      <div class="lm_hint">ความทึบใช้ตอนไม่ได้แตะ แตะหรือชี้แล้วชัดเต็ม</div>
+      <div class="lm_hint">พิมพ์ตัวเลขในช่องได้ ไว้ตั้งให้เท่ากับปุ่มลอยอื่น · ความทึบใช้ตอนไม่ได้แตะ แตะหรือชี้แล้วชัดเต็ม</div>
     </div>
     <div class="lm_card lm_lookcard">
       <div class="lm_lookline"><span>พื้น</span>${select('bg', BGS, L.bg)}${colorInput('bgColor', L.bgColor, !['custom', 'custom2'].includes(L.bg))}${colorInput('bgColor2', L.bgColor2, L.bg !== 'custom2')}</div>
@@ -370,12 +375,51 @@ export function openLookEditor(tab) {
         if (f.type === 'range') {
             const out = body.querySelector(`[data-val="${k}"]`);
             if (out) out.textContent = `${v}${k === 'size' ? 'px' : '%'}`;
+            setLook(kind(), { [k]: v });
+            syncNums();
         }
         const patch = { [k]: v };
         if (k === 'emoji' && String(v).trim() && kind() !== 'menu') patch.image = '';
         if (e.type === 'input') return set(patch);
         if (f.tagName === 'SELECT' || f.type === 'checkbox' || (f.type === 'range' && kind() === 'top' && k === 'size')) set(patch, true);
     };
+    /** The number boxes beside the sliders, from the saved look (a box being typed in is left alone). */
+    const syncNums = () => {
+        const cur = kind() === 'top' ? topLook() : launchLook();
+        const active = document.activeElement;
+        for (const box of body.querySelectorAll('[data-num]')) {
+            const k = box.dataset.num;
+            if (k === 'iconPx') { const n = iconPxNum(cur); box.min = String(n.min); box.max = String(n.max); if (box !== active) box.value = String(n.v); }
+            else if (box !== active) box.value = String(cur[k]);
+        }
+    };
+    const onNum = e => {
+        const box = e.target.closest?.('[data-num]');
+        if (!box || !body.contains(box)) return;
+        const n = Number(box.value);
+        if (box.value === '' || !Number.isFinite(n)) { if (e.type === 'change') syncNums(); return; }
+        const k = box.dataset.num;
+        const clampN = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+        let patch;
+        if (k === 'iconPx') {
+            const size = Number(launchLook().size) || 48;
+            const pct = clampN(Math.round(n * 100 / size), 20, 100);
+            if (e.type === 'input' && Math.abs(Math.round(size * pct / 100) - n) > 1) return; // still typing
+            patch = { iconSize: pct };
+        } else {
+            const min = Number(box.min), max = Number(box.max);
+            if (e.type === 'input' && (n < min || n > max)) return; // still typing, e.g. "1" on the way to "120"
+            patch = { [k]: clampN(Math.round(n), min, max) };
+        }
+        set(patch);
+        const [rk, rv] = Object.entries(patch)[0];
+        const range = body.querySelector(`input[type="range"][data-k="${rk}"]`);
+        if (range) { range.value = String(rv); paintRange(range); }
+        if (e.type === 'change') { box.blur(); syncNums(); }
+    };
+    el.addEventListener('input', onNum);
+    el.addEventListener('change', onNum);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.closest?.('[data-num]')) e.target.blur(); });
     el.addEventListener('input', onField);
     el.addEventListener('change', async e => {
         const file = e.target.closest?.('input[type=file][data-file]');
