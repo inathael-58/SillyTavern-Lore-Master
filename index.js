@@ -31,7 +31,7 @@ import { viewSettings } from './settingsview.js';
 import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './look.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.10.1'; // keep in sync with manifest.json
+const VERSION = '0.10.2'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'style.css', 'manifest.json'];

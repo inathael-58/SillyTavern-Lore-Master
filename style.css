@@ -903,7 +903,8 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_lookimg { margin: 0; }
 #lm_root .lm_lookimg label.lm_btn { position: relative; }
 #lm_root .lm_lookcard { display: flex; flex-direction: column; gap: 6px; }
-#lm_root .lm_lookslider { display: grid; grid-template-columns: 6.5em 1fr 4em; gap: 10px; align-items: center; font-size: 13.5px; }
+#lm_root .lm_lookslider { display: grid; grid-template-columns: 6.5em 1fr auto; gap: 10px; align-items: center; font-size: 13.5px; }
+#lm_root .lm_lookslider .lm_valbox { min-width: 0; padding: 0 10px; }
 #lm_root .lm_lookslider b { font-size: 12.5px; font-weight: 600; color: var(--lm-dim); text-align: right; font-variant-numeric: tabular-nums; }
 #lm_root .lm_lookline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13.5px; }
 #lm_root .lm_lookline > span { min-width: 6.5em; }
