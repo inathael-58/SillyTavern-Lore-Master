@@ -19,7 +19,7 @@
 
 import {
     detectFormat, FORMAT_LABEL, overCap, isGlossary, parseGlossary, pickGlossary, GLOSSARY_HEAD,
-    keyScanner, wouldFire, trimToLimits, byPriority, estTokens, bookStats,
+    keyScanner, wouldFire, trimToLimits, expectedLoad, byPriority, estTokens, bookStats,
 } from './lib.js';
 import * as St from './store.js';
 import { settings, save, migrated } from './prefs.js';
@@ -32,7 +32,7 @@ import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './lo
 import { createDiagnostics } from './diagnostics.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.10.4'; // keep in sync with manifest.json
+const VERSION = '0.10.5'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'style.css', 'manifest.json'];
@@ -578,11 +578,15 @@ function guardBeforeScan(arrays) {
     const consts = all.filter(e => e.constant && !e.disable);
     const first = wouldFire(all, chatScanText(), { ...o, scanner }).sort(byPriority);
     const limits = guardLimits();
-    const { drop, tokens } = trimToLimits([...consts, ...first], limits);
+    // entries with a probability (or in an inclusion group) only fire some of the time: count them
+    // by their chance, not as if they always fired. What really fires is checked again after the scan.
+    const load = expectedLoad([...consts, ...first]);
+    const { drop, tokens } = trimToLimits([...consts, ...first], limits, load.weight);
     if (!drop.length) return;
     const gone = new Set(drop);
     for (const arr of arrays) for (let i = arr.length - 1; i >= 0; i--) if (gone.has(arr[i])) arr.splice(i, 1);
-    trip({ kind: 'first', would: consts.length + first.length, wouldTokens: sumTokens(consts) + sumTokens(first), kept: consts.length + first.length - drop.length, keptTokens: tokens, book: mainBook(drop) });
+    const keptLoad = expectedLoad([...consts, ...first].filter(e => !gone.has(e)));
+    trip({ kind: 'first', would: Math.round(load.n), wouldTokens: Math.round(load.tokens), kept: Math.round(keptLoad.n), keptTokens: Math.round(tokens), book: mainBook(drop) });
 }
 
 function guardAfterLoop(args, map) {
@@ -603,10 +607,11 @@ function guardAfterLoop(args, map) {
     const text = (args.new?.successful ?? []).filter(e => !e.preventRecursion).map(e => e.content).join('\n');
     if (!text) return;
     const next = wouldFire(scanCtx.all, text, { ...scanCtx.o, scanner: scanCtx.scanner, skip: new Set(act), recursion: true });
-    const nt = sumTokens(next);
-    if (act.length + next.length > limits.maxEntries || tokens + nt > limits.maxTokens) {
+    const nextLoad = expectedLoad(next);   // by chance of firing, like the first check
+    const nt = nextLoad.tokens;
+    if (act.length + nextLoad.n > limits.maxEntries || tokens + nt > limits.maxTokens) {
         args.state.next = 0;
-        trip({ kind: 'chain', would: act.length + next.length, wouldTokens: tokens + nt, kept: act.length, keptTokens: tokens, book: mainBook(next) });
+        trip({ kind: 'chain', would: Math.round(act.length + nextLoad.n), wouldTokens: Math.round(tokens + nt), kept: act.length, keptTokens: tokens, book: mainBook(next) });
     }
 }
 

@@ -1545,20 +1545,67 @@ export function cardFromPng(buffer) {
 // ---------------------------------------------------------------- emergency brake (runtime)
 
 /**
+ * How likely an entry is to really fire once its keys match. SillyTavern rolls the entry's
+ * `probability` (when "useProbability" is on) after the keys matched, so a 30% entry is in
+ * the prompt about a third of the time. 1 = always.
+ */
+export function fireChance(e) {
+    if (!e || e.useProbability === false) return 1;
+    const p = Number(e.probability);
+    if (!Number.isFinite(p)) return 1;
+    return Math.min(1, Math.max(0, p / 100));
+}
+
+/**
+ * What a set of entries that all match is worth in the prompt on average: probability entries
+ * count by their chance, and entries in the same inclusion group count as one entry between
+ * them (SillyTavern keeps only one per group). Constants always count in full.
+ * Returns { n, tokens, weight } — n and tokens are sums of weight × (1 | tokens), weight(e) is
+ * the weight of one entry (0..1).
+ * @param {any[]} list
+ */
+export function expectedLoad(list) {
+    const chance = new Map();
+    const groups = new Map();
+    const groupNames = e => String(e.group ?? '').split(',').map(g => g.trim()).filter(Boolean);
+    for (const e of list) {
+        chance.set(e, e.constant ? 1 : fireChance(e));
+        if (e.constant) continue;
+        for (const g of groupNames(e)) {
+            if (!groups.has(g)) groups.set(g, { sum: 0 });
+            groups.get(g).sum += chance.get(e);
+        }
+    }
+    const w = new Map();
+    for (const e of list) {
+        let scale = 1;
+        if (!e.constant) for (const g of groupNames(e)) scale = Math.min(scale, 1 / Math.max(1, groups.get(g).sum));
+        w.set(e, chance.get(e) * scale);
+    }
+    let n = 0, tokens = 0;
+    for (const e of list) { const x = w.get(e); n += x; tokens += x * estTokens(e.content); }
+    return { n, tokens, weight: e => w.get(e) ?? 1 };
+}
+
+/**
  * Keep entries in priority order until either limit is reached. Constant entries are always
  * kept (they are part of the book's design and usually small); the rest are dropped.
+ * `weight` (optional, entry → 0..1) counts an entry as that fraction of itself, for entries that
+ * only fire some of the time (see expectedLoad); without it every entry counts in full.
  * @param {any[]} list entries in priority order (most important first)
  * @param {{maxEntries:number, maxTokens:number}} limits
+ * @param {(e:any)=>number} [weight]
  */
-export function trimToLimits(list, { maxEntries, maxTokens }) {
+export function trimToLimits(list, { maxEntries, maxTokens }, weight = null) {
     const keep = [], drop = [];
     let n = 0, tokens = 0;
     for (const e of list) if (e.constant) { keep.push(e); n++; tokens += estTokens(e.content); }
     for (const e of list) {
         if (e.constant) continue;
-        const t = estTokens(e.content);
-        if (n + 1 > maxEntries || tokens + t > maxTokens) { drop.push(e); continue; }
-        keep.push(e); n++; tokens += t;
+        const w = weight ? weight(e) : 1;
+        const t = estTokens(e.content) * w;
+        if (n + w > maxEntries + 1e-9 || tokens + t > maxTokens + 1e-9) { drop.push(e); continue; }
+        keep.push(e); n += w; tokens += t;
     }
     return { keep, drop, tokens };
 }

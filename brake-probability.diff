@@ -1,0 +1,183 @@
+diff --git a/index.js b/index.js
+index 1d1b05e..213e011 100644
+--- a/index.js
++++ b/index.js
+@@ -19,7 +19,7 @@
+ 
+ import {
+     detectFormat, FORMAT_LABEL, overCap, isGlossary, parseGlossary, pickGlossary, GLOSSARY_HEAD,
+-    keyScanner, wouldFire, trimToLimits, byPriority, estTokens, bookStats,
++    keyScanner, wouldFire, trimToLimits, expectedLoad, byPriority, estTokens, bookStats,
+ } from './lib.js';
+ import * as St from './store.js';
+ import { settings, save, migrated } from './prefs.js';
+@@ -32,7 +32,7 @@ import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './lo
+ import { createDiagnostics } from './diagnostics.js';
+ 
+ const LOG = '[LoreMaster]';
+-const VERSION = '0.10.4'; // keep in sync with manifest.json
++const VERSION = '0.10.5'; // keep in sync with manifest.json
+ const BASE_URL = new URL('.', import.meta.url);
+ /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
+ const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'style.css', 'manifest.json'];
+@@ -578,11 +578,15 @@ function guardBeforeScan(arrays) {
+     const consts = all.filter(e => e.constant && !e.disable);
+     const first = wouldFire(all, chatScanText(), { ...o, scanner }).sort(byPriority);
+     const limits = guardLimits();
+-    const { drop, tokens } = trimToLimits([...consts, ...first], limits);
++    // entries with a probability (or in an inclusion group) only fire some of the time: count them
++    // by their chance, not as if they always fired. What really fires is checked again after the scan.
++    const load = expectedLoad([...consts, ...first]);
++    const { drop, tokens } = trimToLimits([...consts, ...first], limits, load.weight);
+     if (!drop.length) return;
+     const gone = new Set(drop);
+     for (const arr of arrays) for (let i = arr.length - 1; i >= 0; i--) if (gone.has(arr[i])) arr.splice(i, 1);
+-    trip({ kind: 'first', would: consts.length + first.length, wouldTokens: sumTokens(consts) + sumTokens(first), kept: consts.length + first.length - drop.length, keptTokens: tokens, book: mainBook(drop) });
++    const keptLoad = expectedLoad([...consts, ...first].filter(e => !gone.has(e)));
++    trip({ kind: 'first', would: Math.round(load.n), wouldTokens: Math.round(load.tokens), kept: Math.round(keptLoad.n), keptTokens: Math.round(tokens), book: mainBook(drop) });
+ }
+ 
+ function guardAfterLoop(args, map) {
+@@ -603,10 +607,11 @@ function guardAfterLoop(args, map) {
+     const text = (args.new?.successful ?? []).filter(e => !e.preventRecursion).map(e => e.content).join('\n');
+     if (!text) return;
+     const next = wouldFire(scanCtx.all, text, { ...scanCtx.o, scanner: scanCtx.scanner, skip: new Set(act), recursion: true });
+-    const nt = sumTokens(next);
+-    if (act.length + next.length > limits.maxEntries || tokens + nt > limits.maxTokens) {
++    const nextLoad = expectedLoad(next);   // by chance of firing, like the first check
++    const nt = nextLoad.tokens;
++    if (act.length + nextLoad.n > limits.maxEntries || tokens + nt > limits.maxTokens) {
+         args.state.next = 0;
+-        trip({ kind: 'chain', would: act.length + next.length, wouldTokens: tokens + nt, kept: act.length, keptTokens: tokens, book: mainBook(next) });
++        trip({ kind: 'chain', would: Math.round(act.length + nextLoad.n), wouldTokens: Math.round(tokens + nt), kept: act.length, keptTokens: tokens, book: mainBook(next) });
+     }
+ }
+ 
+diff --git a/lib.js b/lib.js
+index 884927d..d305b23 100644
+--- a/lib.js
++++ b/lib.js
+@@ -1544,21 +1544,68 @@ export function cardFromPng(buffer) {
+ 
+ // ---------------------------------------------------------------- emergency brake (runtime)
+ 
++/**
++ * How likely an entry is to really fire once its keys match. SillyTavern rolls the entry's
++ * `probability` (when "useProbability" is on) after the keys matched, so a 30% entry is in
++ * the prompt about a third of the time. 1 = always.
++ */
++export function fireChance(e) {
++    if (!e || e.useProbability === false) return 1;
++    const p = Number(e.probability);
++    if (!Number.isFinite(p)) return 1;
++    return Math.min(1, Math.max(0, p / 100));
++}
++
++/**
++ * What a set of entries that all match is worth in the prompt on average: probability entries
++ * count by their chance, and entries in the same inclusion group count as one entry between
++ * them (SillyTavern keeps only one per group). Constants always count in full.
++ * Returns { n, tokens, weight } — n and tokens are sums of weight × (1 | tokens), weight(e) is
++ * the weight of one entry (0..1).
++ * @param {any[]} list
++ */
++export function expectedLoad(list) {
++    const chance = new Map();
++    const groups = new Map();
++    const groupNames = e => String(e.group ?? '').split(',').map(g => g.trim()).filter(Boolean);
++    for (const e of list) {
++        chance.set(e, e.constant ? 1 : fireChance(e));
++        if (e.constant) continue;
++        for (const g of groupNames(e)) {
++            if (!groups.has(g)) groups.set(g, { sum: 0 });
++            groups.get(g).sum += chance.get(e);
++        }
++    }
++    const w = new Map();
++    for (const e of list) {
++        let scale = 1;
++        if (!e.constant) for (const g of groupNames(e)) scale = Math.min(scale, 1 / Math.max(1, groups.get(g).sum));
++        w.set(e, chance.get(e) * scale);
++    }
++    let n = 0, tokens = 0;
++    for (const e of list) { const x = w.get(e); n += x; tokens += x * estTokens(e.content); }
++    return { n, tokens, weight: e => w.get(e) ?? 1 };
++}
++
+ /**
+  * Keep entries in priority order until either limit is reached. Constant entries are always
+  * kept (they are part of the book's design and usually small); the rest are dropped.
++ * `weight` (optional, entry → 0..1) counts an entry as that fraction of itself, for entries that
++ * only fire some of the time (see expectedLoad); without it every entry counts in full.
+  * @param {any[]} list entries in priority order (most important first)
+  * @param {{maxEntries:number, maxTokens:number}} limits
++ * @param {(e:any)=>number} [weight]
+  */
+-export function trimToLimits(list, { maxEntries, maxTokens }) {
++export function trimToLimits(list, { maxEntries, maxTokens }, weight = null) {
+     const keep = [], drop = [];
+     let n = 0, tokens = 0;
+     for (const e of list) if (e.constant) { keep.push(e); n++; tokens += estTokens(e.content); }
+     for (const e of list) {
+         if (e.constant) continue;
+-        const t = estTokens(e.content);
+-        if (n + 1 > maxEntries || tokens + t > maxTokens) { drop.push(e); continue; }
+-        keep.push(e); n++; tokens += t;
++        const w = weight ? weight(e) : 1;
++        const t = estTokens(e.content) * w;
++        if (n + w > maxEntries + 1e-9 || tokens + t > maxTokens + 1e-9) { drop.push(e); continue; }
++        keep.push(e); n += w; tokens += t;
+     }
+     return { keep, drop, tokens };
+ }
+diff --git a/manifest.json b/manifest.json
+index b65b5c8..c04f89a 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -6,7 +6,7 @@
+     "js": "index.js",
+     "css": "style.css",
+     "author": "Kitima",
+-    "version": "0.10.4",
++    "version": "0.10.5",
+     "homePage": "https://github.com/inathael-58/SillyTavern-Lore-Master",
+     "auto_update": false,
+     "description": "A mobile-first lorebook manager that works next to the World Info panel (or replaces it, if you switch that on) with an emergency brake against lorebooks that explode through recursion, and AI help (Thai keywords, a name glossary sent only when relevant, condensing long entries, translating Korean/Japanese/Chinese entries into English): every lorebook, a full entry editor with plain-Thai help, links to card/chat/Global, bulk edits, ST global settings. Plus import, check, fix and merge lorebooks from other sites (JanitorAI first), a trigger tester and a per-turn entry cap."
+diff --git a/test/lib.test.mjs b/test/lib.test.mjs
+index 7f25819..3f16d93 100644
+--- a/test/lib.test.mjs
++++ b/test/lib.test.mjs
+@@ -7,7 +7,7 @@ import {
+     parseJsonLoose, properNames, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
+     isGlossary, pickGlossary, condenseRequest, cleanCondensed, LONG_TOKENS,
+     textLanguage, entryLanguage, wantsTranslation, translateRequest, parseTranslation, applyTranslation, namesFor,
+-    keyScanner, trimToLimits, wouldFire, cardFromPng, keyPlan,
++    keyScanner, trimToLimits, wouldFire, fireChance, expectedLoad, cardFromPng, keyPlan,
+     LAUNCH_DEFAULT, normLaunchLook, normTopLook, normMenuLook, cleanImage, cleanEmoji,
+ } from '../lib.js';
+ 
+@@ -694,3 +694,24 @@ test('normTopLook and normMenuLook fill and clamp', () => {
+     assert.equal(M.wiIcon, 'fa-key');
+     assert.equal(M.icon, 'fa-book-atlas');
+ });
++
++
++test('fireChance and expectedLoad count probability and group entries by their chance', () => {
++    const mk = (uid, o = {}) => ({ uid, content: 'x'.repeat(400), useProbability: true, probability: 100, ...o });
++    assert.equal(fireChance(mk(0)), 1);
++    assert.equal(fireChance(mk(1, { probability: 30 })), 0.3);
++    assert.equal(fireChance(mk(2, { probability: 30, useProbability: false })), 1);
++    // 20 entries of 100 tokens at 10% = 2 entries / 200 tokens on average, not 20 / 2000
++    const rnd = Array.from({ length: 20 }, (_, i) => mk(i, { probability: 10 }));
++    const L = expectedLoad(rnd);
++    assert.ok(Math.abs(L.n - 2) < 1e-9 && Math.abs(L.tokens - 200) < 1e-9);
++    // an inclusion group of 5 always-matching entries counts as one entry
++    const grp = Array.from({ length: 5 }, (_, i) => mk(i, { group: 'weather' }));
++    assert.ok(Math.abs(expectedLoad(grp).n - 1) < 1e-9);
++    // constants count in full
++    assert.equal(expectedLoad([mk(0, { constant: true, probability: 10 })]).n, 1);
++    // the brake no longer trips for them, but still trips for always-firing entries
++    const lim = { maxEntries: 5, maxTokens: 100000 };
++    assert.equal(trimToLimits(rnd, lim, expectedLoad(rnd).weight).drop.length, 0);
++    assert.equal(trimToLimits(rnd, lim).drop.length, 15);
++});
