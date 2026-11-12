@@ -780,18 +780,26 @@ export function diagnose(entries, ctx = {}) {
     }
 
     // 7) too many always-on entries
+    // Constants in one inclusion group are a random table (quotes, events, weather): SillyTavern
+    // puts only one of them in each turn, so a group counts once, as its largest member, and is
+    // never offered for "un-constant" (with no keys they would stop firing at all).
     {
         const consts = live.filter(e => e.constant);
-        const tokens = consts.reduce((n, e) => n + estTokens(e.content), 0);
-        if (consts.length > 3 || tokens > 1500) {
-            const sorted = [...consts].sort((a, b) => estTokens(a.content) - estTokens(b.content));
+        const solo = consts.filter(e => !groupsOf(e).length);
+        const groups = new Set(consts.flatMap(e => groupsOf(e).slice(0, 1)));
+        const { count, tokens } = turnSlots(consts);
+        if (solo.length && (count > 3 || tokens > 1500)) {
+            const sorted = [...solo].sort((a, b) => estTokens(a.content) - estTokens(b.content));
             const keepUid = sorted[0]?.uid;
+            const inGroups = consts.length - solo.length;
             issues.push({
                 id: 'constant', kind: 'safe', short: 'เลิกติดตลอด (constant)', severity: 'high',
                 fix: 'เปลี่ยนเป็นติดเมื่อเจอคีย์',
-                tradeoff: 'เรื่องนั้นจะเข้า prompt เฉพาะเทิร์นที่มีคนพูดถึง เก็บตัวที่เล็กที่สุดไว้ให้ 1 ตัว ตัวไหนต้องรู้ทุกเทิร์นจริง ๆ ให้เอาติ๊กออก', title: `ติดตลอด (constant) ${consts.length} เอนทรี ≈ ${tokens.toLocaleString()} โทเคนทุกเทิร์น`,
-                why: 'เอนทรี constant เข้า prompt ทุกเทิร์นโดยไม่ต้องเจอคีย์ ควรเหลือเฉพาะเรื่องที่ต้องรู้ตลอด เช่น ภาพรวมโลก ที่เหลือเปลี่ยนให้ติดเมื่อเจอคีย์',
-                changes: consts.map(e => change({
+                tradeoff: 'เรื่องนั้นจะเข้า prompt เฉพาะเทิร์นที่มีคนพูดถึง เก็บตัวที่เล็กที่สุดไว้ให้ 1 ตัว ตัวไหนต้องรู้ทุกเทิร์นจริง ๆ ให้เอาติ๊กออก',
+                title: `ติดตลอด (constant) ${solo.length} เอนทรี${groups.size ? ` + กลุ่มสุ่ม ${groups.size} กลุ่ม` : ''} ≈ ${tokens.toLocaleString()} โทเคนทุกเทิร์น`,
+                why: 'เอนทรี constant เข้า prompt ทุกเทิร์นโดยไม่ต้องเจอคีย์ ควรเหลือเฉพาะเรื่องที่ต้องรู้ตลอด เช่น ภาพรวมโลก ที่เหลือเปลี่ยนให้ติดเมื่อเจอคีย์' +
+                    (inGroups ? ` (constant ${inGroups} เอนทรีที่อยู่ใน inclusion group นับกลุ่มละ 1 เพราะ ST สุ่มใส่แค่ตัวเดียวต่อเทิร์น จึงไม่อยู่ในรายการให้แก้)` : ''),
+                changes: solo.map(e => change({
                     op: 'set', uid: e.uid, field: 'constant', value: false,
                     checked: e.uid !== keepUid && (e.key ?? []).length > 0,
                     label: `${nameOf(e)} (≈${estTokens(e.content)} โทเคน)${(e.key ?? []).length ? '' : ' — ไม่มีคีย์ ถ้าเปลี่ยนจะไม่ติดเลย'}`,
@@ -1545,9 +1553,9 @@ export function cardFromPng(buffer) {
 // ---------------------------------------------------------------- emergency brake (runtime)
 
 /**
- * How likely an entry is to really fire once its keys match. SillyTavern rolls the entry's
- * `probability` (when "useProbability" is on) after the keys matched, so a 30% entry is in
- * the prompt about a third of the time. 1 = always.
+ * How likely an entry is to really fire once it is picked. SillyTavern rolls the entry's
+ * `probability` (when "useProbability" is on) after the keys matched (constants roll too),
+ * so a 30% entry is in the prompt about a third of the time. 1 = always.
  */
 export function fireChance(e) {
     if (!e || e.useProbability === false) return 1;
@@ -1556,30 +1564,40 @@ export function fireChance(e) {
     return Math.min(1, Math.max(0, p / 100));
 }
 
+/** The inclusion groups of an entry ("a, b" = two groups). */
+export const groupsOf = e => String(e?.group ?? '').split(',').map(g => g.trim()).filter(Boolean);
+
+/**
+ * Is the entry still held back by its `delay` (it only fires once the chat has that many
+ * messages)? `chatLength` unknown (not a number) = not delayed.
+ */
+export function delayed(e, chatLength) {
+    const d = Number(e?.delay);
+    return typeof chatLength === 'number' && Number.isFinite(d) && d > 0 && chatLength < d;
+}
+
 /**
  * What a set of entries that all match is worth in the prompt on average: probability entries
  * count by their chance, and entries in the same inclusion group count as one entry between
- * them (SillyTavern keeps only one per group). Constants always count in full.
+ * them, constants included (SillyTavern keeps only one per group: a book of 300 constant
+ * quotes in one group puts 1 quote in the prompt, not 300). Groups in `taken` already have an
+ * entry in the prompt from an earlier loop, so SillyTavern adds no more of them: weight 0.
  * Returns { n, tokens, weight } — n and tokens are sums of weight × (1 | tokens), weight(e) is
  * the weight of one entry (0..1).
  * @param {any[]} list
+ * @param {{ taken?: Set<string> | null }} [opts]
  */
-export function expectedLoad(list) {
+export function expectedLoad(list, { taken = null } = {}) {
     const chance = new Map();
     const groups = new Map();
-    const groupNames = e => String(e.group ?? '').split(',').map(g => g.trim()).filter(Boolean);
     for (const e of list) {
-        chance.set(e, e.constant ? 1 : fireChance(e));
-        if (e.constant) continue;
-        for (const g of groupNames(e)) {
-            if (!groups.has(g)) groups.set(g, { sum: 0 });
-            groups.get(g).sum += chance.get(e);
-        }
+        chance.set(e, fireChance(e));
+        for (const g of groupsOf(e)) groups.set(g, (groups.get(g) ?? 0) + chance.get(e));
     }
     const w = new Map();
     for (const e of list) {
         let scale = 1;
-        if (!e.constant) for (const g of groupNames(e)) scale = Math.min(scale, 1 / Math.max(1, groups.get(g).sum));
+        for (const g of groupsOf(e)) scale = taken?.has(g) ? 0 : Math.min(scale, 1 / Math.max(1, groups.get(g)));
         w.set(e, chance.get(e) * scale);
     }
     let n = 0, tokens = 0;
@@ -1588,10 +1606,28 @@ export function expectedLoad(list) {
 }
 
 /**
+ * How much of the prompt a set of entries can take in one turn if all of them are picked:
+ * entries of one inclusion group count once, as their largest member.
+ * @returns {{ count: number, tokens: number }}
+ */
+export function turnSlots(list) {
+    let count = 0, tokens = 0;
+    const groups = new Map();
+    for (const e of list) {
+        const g = groupsOf(e)[0];
+        const t = estTokens(e.content);
+        if (!g) { count++; tokens += t; continue; }
+        groups.set(g, Math.max(groups.get(g) ?? 0, t));
+    }
+    for (const t of groups.values()) { count++; tokens += t; }
+    return { count, tokens };
+}
+
+/**
  * Keep entries in priority order until either limit is reached. Constant entries are always
  * kept (they are part of the book's design and usually small); the rest are dropped.
  * `weight` (optional, entry → 0..1) counts an entry as that fraction of itself, for entries that
- * only fire some of the time (see expectedLoad); without it every entry counts in full.
+ * only fire some of the time (see expectedLoad), constants too; without it every entry counts in full.
  * @param {any[]} list entries in priority order (most important first)
  * @param {{maxEntries:number, maxTokens:number}} limits
  * @param {(e:any)=>number} [weight]
@@ -1599,13 +1635,14 @@ export function expectedLoad(list) {
 export function trimToLimits(list, { maxEntries, maxTokens }, weight = null) {
     const keep = [], drop = [];
     let n = 0, tokens = 0;
-    for (const e of list) if (e.constant) { keep.push(e); n++; tokens += estTokens(e.content); }
+    const w = e => (weight ? weight(e) : 1);
+    for (const e of list) if (e.constant) { keep.push(e); n += w(e); tokens += estTokens(e.content) * w(e); }
     for (const e of list) {
         if (e.constant) continue;
-        const w = weight ? weight(e) : 1;
-        const t = estTokens(e.content) * w;
-        if (n + w > maxEntries + 1e-9 || tokens + t > maxTokens + 1e-9) { drop.push(e); continue; }
-        keep.push(e); n += w; tokens += t;
+        const x = w(e);
+        const t = estTokens(e.content) * x;
+        if (n + x > maxEntries + 1e-9 || tokens + t > maxTokens + 1e-9) { drop.push(e); continue; }
+        keep.push(e); n += x; tokens += t;
     }
     return { keep, drop, tokens };
 }
@@ -1615,9 +1652,10 @@ export const byPriority = (a, b) => (Number(b.order) || 0) - (Number(a.order) ||
 
 /**
  * Entries that would fire on `text` (first scan: chat), using the one-pass scanner.
- * Probability, groups and timed effects are ignored (worst case).
+ * Probability, groups, sticky and cooldown are ignored (worst case); `delay` is honoured when
+ * `chatLength` is given, and "delay until recursion" entries only fire in recursion.
  */
-export function wouldFire(entries, text, { names = {}, caseSensitive = false, wholeWords = false, scanner = null, skip = null, recursion = false } = {}) {
+export function wouldFire(entries, text, { names = {}, caseSensitive = false, wholeWords = false, scanner = null, skip = null, recursion = false, chatLength = null } = {}) {
     const scan = scanner ?? keyScanner(entries.filter(e => !e.constant && !e.disable), names);
     const cand = scan(text);
     const opts = { names, caseSensitive, wholeWords };
@@ -1625,6 +1663,8 @@ export function wouldFire(entries, text, { names = {}, caseSensitive = false, wh
     for (const e of entries) {
         if (e.disable || e.constant || !cand.has(e) || skip?.has(e)) continue;
         if (recursion && e.excludeRecursion) continue;
+        if (!recursion && e.delayUntilRecursion) continue;
+        if (delayed(e, chatLength)) continue;
         if (firingKey(e, text, opts) !== null) out.push(e);
     }
     return out;

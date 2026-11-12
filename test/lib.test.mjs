@@ -7,7 +7,7 @@ import {
     parseJsonLoose, properNames, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, vetThaiKey, glossaryLines, glossaryContent, parseGlossary, upsertGlossaryList,
     isGlossary, pickGlossary, condenseRequest, cleanCondensed, LONG_TOKENS,
     textLanguage, entryLanguage, wantsTranslation, translateRequest, parseTranslation, applyTranslation, namesFor,
-    keyScanner, trimToLimits, wouldFire, cardFromPng, keyPlan,
+    keyScanner, trimToLimits, wouldFire, cardFromPng, keyPlan, expectedLoad, turnSlots, delayed,
     LAUNCH_DEFAULT, normLaunchLook, normTopLook, normMenuLook, cleanImage, cleanEmoji,
 } from '../lib.js';
 
@@ -693,4 +693,59 @@ test('normTopLook and normMenuLook fill and clamp', () => {
     assert.equal(M.label, 'Lore Master');
     assert.equal(M.wiIcon, 'fa-key');
     assert.equal(M.icon, 'fa-book-atlas');
+});
+
+// ---------------------------------------------------------------- emergency brake: random tables
+
+/** A "random quote" book: many constants in one inclusion group, SillyTavern picks one per turn. */
+const quoteBook = n => Array.from({ length: n }, (_, i) => ({ uid: i, key: [], constant: true, group: 'quotes', probability: 100, useProbability: true, content: 'x'.repeat(200), world: 'quotes' }));
+
+test('expectedLoad counts constants in one inclusion group as one entry', () => {
+    const load = expectedLoad(quoteBook(300));
+    assert.ok(Math.abs(load.n - 1) < 1e-9);
+    assert.ok(Math.abs(load.tokens - 50) < 1e-9);
+});
+
+test('expectedLoad: constants roll their probability, taken groups add nothing', () => {
+    assert.ok(Math.abs(expectedLoad([{ constant: true, probability: 25, useProbability: true, content: '' }]).n - 0.25) < 1e-9);
+    const es = [{ key: ['a'], group: 'ev', content: '' }, { key: ['a'], group: 'ev', content: '' }, { key: ['a'], content: '' }];
+    assert.ok(Math.abs(expectedLoad(es, { taken: new Set(['ev']) }).n - 1) < 1e-9);
+});
+
+test('a random-quote book does not make the brake drop the keyword entries of another book', () => {
+    const lore = Array.from({ length: 30 }, (_, i) => ({ uid: 1000 + i, key: ['ตลาด'], content: 'y'.repeat(400), world: 'bot', order: 100 }));
+    const all = [...quoteBook(300), ...lore];
+    const consts = all.filter(e => e.constant);
+    const first = wouldFire(all, 'ไปตลาดกัน', {});
+    const list = [...consts, ...first];
+    const { drop } = trimToLimits(list, { maxEntries: 40, maxTokens: 25000 }, expectedLoad(list).weight);
+    assert.equal(first.length, 30);
+    assert.equal(drop.length, 0);
+});
+
+test('trimToLimits weighs constants too', () => {
+    const e = (uid, constant = false) => ({ uid, content: 'x'.repeat(40), constant });
+    const { drop } = trimToLimits([e(0, true), e(1, true), e(2, true), e(3)], { maxEntries: 2, maxTokens: 1000 }, x => (x.constant ? 0.1 : 1));
+    assert.deepEqual(drop, []);
+});
+
+test('wouldFire honours delay and delay-until-recursion', () => {
+    const es = [{ uid: 0, key: ['Ken'], delay: 4 }, { uid: 1, key: ['Ken'], delayUntilRecursion: true }, { uid: 2, key: ['Ken'] }];
+    assert.deepEqual(wouldFire(es, 'Ken', { chatLength: 2 }).map(e => e.uid), [2]);
+    assert.deepEqual(wouldFire(es, 'Ken', { chatLength: 4 }).map(e => e.uid), [0, 2]);
+    assert.deepEqual(wouldFire(es, 'Ken', { recursion: true }).map(e => e.uid), [0, 1, 2]);
+    assert.equal(delayed({ delay: 3 }, null), false);
+});
+
+test('turnSlots counts a group once, as its largest member', () => {
+    const es = [{ content: 'xxxx' }, { group: 'g', content: 'x'.repeat(8) }, { group: 'g', content: 'x'.repeat(40) }];
+    assert.deepEqual(turnSlots(es), { count: 2, tokens: 11 });
+});
+
+test('doctor does not offer to un-constant a random table', () => {
+    const es = readLorebook(quoteBook(300).map((e, i) => jan(i, `Q${i}`, [], e.content, { constant: true, inclusionGroupRaw: 'quotes' }))).entries;
+    assert.equal(diagnose(es, {}).find(i => i.id === 'constant'), undefined);
+    const mixed = [...es, ...readLorebook([0, 1, 2, 3].map(i => jan(i, `C${i}`, [`k${i}`], 'x'.repeat(100 * (i + 1)), { constant: true }))).entries];
+    const issue = diagnose(mixed, {}).find(i => i.id === 'constant');
+    assert.equal(issue.changes.length, 4);
 });
