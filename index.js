@@ -19,7 +19,7 @@
 
 import {
     detectFormat, FORMAT_LABEL, overCap, isGlossary, parseGlossary, pickGlossary, GLOSSARY_HEAD,
-    keyScanner, wouldFire, trimToLimits, expectedLoad, byPriority, estTokens, bookStats,
+    keyScanner, wouldFire, trimToLimits, expectedLoad, turnSlots, groupsOf, delayed, byPriority, estTokens, bookStats, entriesOf,
 } from './lib.js';
 import * as St from './store.js';
 import { settings, save, migrated } from './prefs.js';
@@ -32,7 +32,7 @@ import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './lo
 import { createDiagnostics } from './diagnostics.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.10.5'; // keep in sync with manifest.json
+const VERSION = '0.10.6'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'style.css', 'manifest.json'];
@@ -574,12 +574,15 @@ function guardBeforeScan(arrays) {
     if (!all.length) return;
     const o = matchOpts();
     const scanner = keyScanner(all.filter(e => !e.constant && !e.disable), o.names);
-    scanCtx = { all, scanner, o };
-    const consts = all.filter(e => e.constant && !e.disable);
-    const first = wouldFire(all, chatScanText(), { ...o, scanner }).sort(byPriority);
+    const chatLength = (St.ctx().chat ?? []).length;
+    scanCtx = { all, scanner, o, chatLength };
+    // entries still waiting for their `delay` (chat too short) do not fire yet, constants included
+    const consts = all.filter(e => e.constant && !e.disable && !delayed(e, chatLength));
+    const first = wouldFire(all, chatScanText(), { ...o, scanner, chatLength }).sort(byPriority);
     const limits = guardLimits();
-    // entries with a probability (or in an inclusion group) only fire some of the time: count them
-    // by their chance, not as if they always fired. What really fires is checked again after the scan.
+    // entries with a probability or in an inclusion group (constants too: a "random quote" book is
+    // hundreds of constants in one group, and only one of them goes in) only fire some of the time:
+    // count them by their chance, not as if they all fired. What really fires is checked again after the scan.
     const load = expectedLoad([...consts, ...first]);
     const { drop, tokens } = trimToLimits([...consts, ...first], limits, load.weight);
     if (!drop.length) return;
@@ -606,8 +609,9 @@ function guardAfterLoop(args, map) {
     // what would the next recursion loop pull in?
     const text = (args.new?.successful ?? []).filter(e => !e.preventRecursion).map(e => e.content).join('\n');
     if (!text) return;
-    const next = wouldFire(scanCtx.all, text, { ...scanCtx.o, scanner: scanCtx.scanner, skip: new Set(act), recursion: true });
-    const nextLoad = expectedLoad(next);   // by chance of firing, like the first check
+    const next = wouldFire(scanCtx.all, text, { ...scanCtx.o, scanner: scanCtx.scanner, skip: new Set(act), recursion: true, chatLength: scanCtx.chatLength });
+    // by chance of firing, like the first check; a group that already has an entry in adds no more
+    const nextLoad = expectedLoad(next, { taken: new Set(act.flatMap(groupsOf)) });
     const nt = nextLoad.tokens;
     if (act.length + nextLoad.n > limits.maxEntries || tokens + nt > limits.maxTokens) {
         args.state.next = 0;
@@ -640,7 +644,9 @@ async function warnBigBooks() {
             const data = await W.loadWorldInfo(name);
             if (!data) continue;
             const st = bookStats(data);
-            if (st.tokens < 100000 && st.count < 300) continue;
+            // a big random table (hundreds of entries in one inclusion group) puts one entry in per turn: not big
+            const slots = turnSlots(entriesOf(data).filter(e => !e.disable));
+            if (slots.tokens < 100000 && slots.count < 300) continue;
             toast.warning(`“${name}” มี ${st.count.toLocaleString()} เอนทรี ≈${st.tokens.toLocaleString()} โทเคน ${settings().guard ? 'เบรกฉุกเฉินเปิดอยู่ ST จะไม่ค้าง แต่' : 'เล่มขนาดนี้ทำให้ ST ค้างได้ และ'}ควรตรวจเล่มก่อนเล่น\nแตะเพื่อตรวจ`,
                 'Lore Master: lorebook ใหญ่มาก', { timeOut: 15000, extendedTimeOut: 8000, onclick: () => { checkBook(name); openLM(null, 'doctor'); } });
         } catch { /* ignore */ }
