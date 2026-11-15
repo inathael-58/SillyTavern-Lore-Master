@@ -944,3 +944,17 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_sticky { background: var(--lm-solid); }
 body.no-blur #lm_root :is(.lm_panel, .lm_selbar, .lm_sheet, .lm_dialog) { background: var(--lm-solid); }
 body.no-blur #lm_root .lm_lookstage { background-color: var(--lm-solid); }
+
+/* แม่แบบสีที่อ่านออกเสมอ (theme-palette.js) — เฉพาะแผงที่แสดงข้อมูล: พื้นทึบ และสีเน้น/ตัวอักษรตัดกับพื้นจริง
+   ทำงานเมื่อคำนวณสีสำเร็จแล้วเท่านั้น (<html class="lm-pal">) ถ้าไม่สำเร็จจะใช้สีธีมตรง ๆ แบบเดิม
+   ปุ่มลอย / ปุ่มบนแถบ (.lm_launch, #lm_launcher) ไม่อยู่ในนี้ — คงหน้าตาที่ตั้งไว้ */
+html.lm-pal :is(#lm_root, #lm_settings) {
+    --SmartThemeBlurTintColor: var(--lm-p-surface);
+    --SmartThemeBodyColor: var(--lm-p-fg);
+    --SmartThemeQuoteColor: var(--lm-p-accent-text);
+    --SmartThemeEmColor: var(--lm-p-em);
+    --SmartThemeUnderlineColor: var(--lm-p-underline);
+    --SmartThemeBorderColor: var(--lm-p-line);
+}
+/* ตัวอักษรบนพื้นสีเน้น: เดิมเป็นสีเข้มตายตัว — ใช้สีที่ตัดกับสีเน้นที่ปรับแล้ว */
+html.lm-pal #lm_root { --lm-on-accent: var(--lm-p-on-accent); }
