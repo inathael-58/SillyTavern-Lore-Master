@@ -30,12 +30,13 @@ import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor,
 import { viewSettings } from './settingsview.js';
 import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './look.js';
 import { createDiagnostics } from './diagnostics.js';
+import { installThemePalette } from './theme-palette.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.10.7'; // keep in sync with manifest.json
+const VERSION = '0.10.8'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
-const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'style.css', 'manifest.json'];
+const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'theme-palette.js', 'style.css', 'manifest.json'];
 
 // Extensions > Lore Master > Diagnose (and /lore-debug): opens Lore Master, measures it, reports.
 const DIAG = createDiagnostics({
@@ -799,6 +800,8 @@ function registerCommands() {
 // ================================================================ start
 
 (function init() {
+    // สีที่อ่านออกเสมอ: แผงข้อมูลทึบ สีเน้นตัดกับพื้นจริง (ดู theme-palette.js)
+    try { installThemePalette({ prefix: 'lm', surfaces: { light: '#f6f4f1', dark: '#15151b' } }); } catch (err) { console.warn(LOG, 'theme palette', err); }
     settings();
     if (migrated.replaceWorldInfo) {
         save();
