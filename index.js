@@ -801,7 +801,7 @@ function registerCommands() {
 
 (function init() {
     // สีที่อ่านออกเสมอ: แผงข้อมูลทึบ สีเน้นตัดกับพื้นจริง (ดู theme-palette.js)
-    try { installThemePalette({ prefix: 'lm' }); } catch (err) { console.warn(LOG, 'theme palette', err); }
+    try { installThemePalette({ prefix: 'lm', surfaces: { light: '#f6f4f1', dark: '#15151b' } }); } catch (err) { console.warn(LOG, 'theme palette', err); }
     settings();
     if (migrated.replaceWorldInfo) {
         save();

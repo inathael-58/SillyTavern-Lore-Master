@@ -948,7 +948,7 @@ body.no-blur #lm_root .lm_lookstage { background-color: var(--lm-solid); }
 /* แม่แบบสีที่อ่านออกเสมอ (theme-palette.js) — เฉพาะแผงที่แสดงข้อมูล: พื้นทึบ และสีเน้น/ตัวอักษรตัดกับพื้นจริง
    ทำงานเมื่อคำนวณสีสำเร็จแล้วเท่านั้น (<html class="lm-pal">) ถ้าไม่สำเร็จจะใช้สีธีมตรง ๆ แบบเดิม
    ปุ่มลอย / ปุ่มบนแถบ (.lm_launch, #lm_launcher) ไม่อยู่ในนี้ — คงหน้าตาที่ตั้งไว้ */
-html.lm-pal :is(#lm_root, #lm_settings) {
+html.lm-pal :is(#lm_root:not([data-scheme="light"]):not([data-scheme="dark"]), #lm_settings) {
     --SmartThemeBlurTintColor: var(--lm-p-surface);
     --SmartThemeBodyColor: var(--lm-p-fg);
     --SmartThemeQuoteColor: var(--lm-p-accent-text);
@@ -957,4 +957,7 @@ html.lm-pal :is(#lm_root, #lm_settings) {
     --SmartThemeBorderColor: var(--lm-p-line);
 }
 /* ตัวอักษรบนพื้นสีเน้น: เดิมเป็นสีเข้มตายตัว — ใช้สีที่ตัดกับสีเน้นที่ปรับแล้ว */
-html.lm-pal #lm_root { --lm-on-accent: var(--lm-p-on-accent); }
+html.lm-pal #lm_root:not([data-scheme="light"]):not([data-scheme="dark"]) { --lm-on-accent: var(--lm-p-on-accent); }
+/* โหมดสว่าง/มืดที่เลือกเอง คงชุดสีของตัวเอง เปลี่ยนแค่สีเน้นให้ตัดกับพื้นของโหมดนั้น */
+html.lm-pal #lm_root[data-scheme="light"] { --lm-accent: var(--lm-p-accent-light); --lm-on-accent: #ffffff; }
+html.lm-pal #lm_root[data-scheme="dark"] { --lm-accent: var(--lm-p-accent-dark); }
