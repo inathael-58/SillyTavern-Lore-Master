@@ -961,3 +961,7 @@ html.lm-pal #lm_root:not([data-scheme="light"]):not([data-scheme="dark"]) { --lm
 /* โหมดสว่าง/มืดที่เลือกเอง คงชุดสีของตัวเอง เปลี่ยนแค่สีเน้นให้ตัดกับพื้นของโหมดนั้น */
 html.lm-pal #lm_root[data-scheme="light"] { --lm-accent: var(--lm-p-accent-light); --lm-on-accent: #ffffff; }
 html.lm-pal #lm_root[data-scheme="dark"] { --lm-accent: var(--lm-p-accent-dark); }
+
+/* ST's plain .menu_button is display:flex, which drops the space between an icon and its
+   label. Zero-specificity roots, so a gap this extension already sets still wins. */
+:where([class^="lm_"], [class*=" lm_"], [id^="lm_"]) .menu_button { gap: 0.4em; }

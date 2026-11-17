@@ -33,7 +33,7 @@ import { createDiagnostics } from './diagnostics.js';
 import { installThemePalette } from './theme-palette.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.10.8'; // keep in sync with manifest.json
+const VERSION = '0.10.9'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'theme-palette.js', 'style.css', 'manifest.json'];
