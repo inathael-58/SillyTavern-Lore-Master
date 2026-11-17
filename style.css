@@ -965,3 +965,13 @@ html.lm-pal #lm_root[data-scheme="dark"] { --lm-accent: var(--lm-p-accent-dark);
 /* ST's plain .menu_button is display:flex, which drops the space between an icon and its
    label. Zero-specificity roots, so a gap this extension already sets still wins. */
 :where([class^="lm_"], [class*=" lm_"], [id^="lm_"]) .menu_button { gap: 0.4em; }
+
+/* ST draws inputs with a grey film (var(--black30a)) that turns muddy on light themes.
+   In these panels, once the palette is ready, inputs take its card surface and readable
+   text instead, so no custom CSS is needed. */
+html.lm-pal :where(#lm_root:not([data-scheme="light"]):not([data-scheme="dark"]), #lm_settings) :is(.text_pole, textarea, select, input:is([type="text"], [type="search"], [type="number"], [type="url"], [type="email"], [type="password"], :not([type]))) {
+    background-color: var(--lm-p-surface2);
+    color: var(--lm-p-fg);
+    border-color: var(--lm-p-line);
+}
+html.lm-pal :where(#lm_root:not([data-scheme="light"]):not([data-scheme="dark"]), #lm_settings) :is(.text_pole, textarea, input)::placeholder { color: var(--lm-p-muted); opacity: 1; }
