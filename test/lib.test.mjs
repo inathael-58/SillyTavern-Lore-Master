@@ -749,3 +749,17 @@ test('doctor does not offer to un-constant a random table', () => {
     const issue = diagnose(mixed, {}).find(i => i.id === 'constant');
     assert.equal(issue.changes.length, 4);
 });
+
+test('World Info button: tap and hold follow the chosen mode', async () => {
+    const { wiButtonAction: a } = await import('../lib.js');
+    assert.equal(a('off', 'tap'), 'st');
+    assert.equal(a('off', 'hold'), 'st');
+    assert.equal(a(undefined, 'hold'), 'st');
+    assert.equal(a('hold', 'tap'), 'st');
+    assert.equal(a('hold', 'hold'), 'lm');
+    assert.equal(a('tap', 'tap'), 'lm');
+    assert.equal(a('tap', 'hold'), 'st');
+    // an open World Info panel still closes with a tap
+    assert.equal(a('tap', 'tap', true), 'st');
+    assert.equal(a('hold', 'hold', true), 'lm');
+});

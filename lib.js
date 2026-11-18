@@ -1795,3 +1795,14 @@ export function normMenuLook(raw) {
         wiEmoji: cleanEmoji(r.wiEmoji),
     };
 }
+
+/**
+ * What a press on SillyTavern's World Info button (top bar) does under the "World Info button" setting.
+ * mode: 'off' | 'hold' (hold opens Lore Master) | 'tap' (tap opens Lore Master); gesture: 'tap' | 'hold';
+ * open: ST's World Info panel is open already, so a tap still closes it. Returns 'st' or 'lm'.
+ */
+export function wiButtonAction(mode, gesture, open = false) {
+    if (mode !== 'hold' && mode !== 'tap') return 'st';
+    if (open && gesture === 'tap') return 'st';
+    return (mode === 'tap') === (gesture === 'tap') ? 'lm' : 'st';
+}
