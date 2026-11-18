@@ -52,7 +52,8 @@ export function viewSettings() {
         <h3 class="lm_h">${icon('fa-door-open')} ทางเข้า Lore Master</h3>
         <div class="lm_card lm_settings">
           ${prefRow('launcher', 'ปุ่มลอย', 'ลากไปวางตรงไหนก็ได้ ดูดติดขอบ กดค้างเพื่อแต่งปุ่ม เก็บเข้า Quick Dock ได้ (เลือกปุ่มบนจอ)')}
-          ${prefRow('topbar', 'ไอคอนบนแถบด้านบน', s.replaceWorldInfo ? 'ตอนนี้ปุ่ม World Info ของ ST เปิด Lore Master อยู่แล้ว ไม่ต้องเปิดอันนี้ก็ได้' : 'ไอคอนแยกของ Lore Master ข้างปุ่ม World Info ของ ST')}
+          ${wiButtonRow()}
+          ${prefRow('topbar', 'ไอคอนบนแถบด้านบน', s.wiButton !== 'off' ? 'ตอนนี้ปุ่ม World Info ของ ST เปิด Lore Master ได้อยู่แล้ว ไม่ต้องเปิดอันนี้ก็ได้' : 'ไอคอนแยกของ Lore Master ข้างปุ่ม World Info ของ ST')}
           ${prefRow('wand', 'เมนูไม้กายสิทธิ์ (Extensions)', '')}
           <div class="lm_hint">พิมพ์ <code>/lore</code> หรือ <code>/lore ชื่อเล่ม</code> ได้เสมอ ใช้ทำปุ่มใน Quick Reply / Quick Dock ได้ · ปุ่ม “เปิดใน lorebook” ของ Lore Lens เปิดเอนทรีที่นี่ (ปิดได้ในการตั้งค่าของ Lore Lens)</div>
           <div class="lm_row lm_wrap">
@@ -195,6 +196,20 @@ function aiBlock() {
         <button class="lm_btn" data-act="s-namesclear" ${cachedNames ? '' : 'disabled'}>${icon('fa-eraser')} ล้าง</button></div>`;
 }
 
+const WI_BUTTON_MODES = [['off', 'ไม่ใช้'], ['hold', 'กดค้าง'], ['tap', 'แตะ']];
+
+/** ST's top-bar World Info button: what a tap and a hold open. */
+function wiButtonRow() {
+    const m = settings().wiButton;
+    return `<div class="lm_setrow lm_setcol"><div><b>เปิด Lore Master จากปุ่ม World Info ของ ST</b><small>${m === 'hold'
+        ? 'แตะเปิดหน้า World Info ของ ST ตามเดิม กดค้างเปิด Lore Master'
+        : m === 'tap'
+            ? 'แตะเปิด Lore Master กดค้างเปิดหน้า World Info ของ ST'
+            : 'ปุ่มหนังสือบนแถบด้านบนเปิดหน้า World Info ของ ST ตามปกติ ทั้งแตะและกดค้าง'} · ตอนหน้า World Info ของ ST เปิดอยู่ แตะเพื่อปิดได้ตามปกติ</small></div>
+        <div class="lm_seg lm_seg3" role="group" aria-label="ปุ่ม World Info ของ ST">${WI_BUTTON_MODES.map(([v, l]) =>
+            `<button class="lm_segbtn ${m === v ? 'lm_on' : ''}" data-act="s-wibtn" data-v="${v}" aria-pressed="${m === v}">${l}</button>`).join('')}</div></div>`;
+}
+
 /** Side by side (default) or in place of ST's own World Info panel. */
 function worldInfoBlock() {
     const on = !!settings().replaceWorldInfo;
@@ -205,8 +220,8 @@ function worldInfoBlock() {
         ${opt(true, 'fa-right-left', 'ใช้แทน')}
       </div>
       <div class="lm_hint">${on
-        ? '<b>ใช้แทน:</b> ปุ่มหนังสือ (World Info) บนแถบด้านบน ปุ่มลูกโลกในหน้าการ์ด และปุ่ม Chat Lore จะเปิด Lore Master แทนหน้าเดิมของ ST · ถ้าต้องการหน้าเดิมสักครั้ง กดปุ่มพร้อม Shift หรือ Alt หรือกดปุ่มด้านล่าง'
-        : '<b>ใช้คู่กัน (ค่าเริ่มต้น):</b> ปุ่มของ ST ทุกปุ่มเปิดหน้า World Info เดิมของ ST ตามปกติ ไม่มีอะไรเปลี่ยน · Lore Master เปิดจากทางของมันเองเท่านั้น (ปุ่มลอย เมนูไม้กายสิทธิ์ <code>/lore</code> ลิงก์จาก Lore Lens) · แก้เล่มเดียวกันได้ทั้งสองที่ บันทึกแล้วอีกฝั่งเห็นตาม'}</div>
+        ? '<b>ใช้แทน:</b> ปุ่มลูกโลกในหน้าการ์ด และปุ่ม Chat Lore จะเปิด Lore Master แทนหน้าเดิมของ ST · ปุ่ม World Info บนแถบด้านบนตั้งแยกได้ใน ทางเข้า Lore Master (แตะหรือกดค้าง) · ถ้าต้องการหน้าเดิมสักครั้ง กดปุ่มพร้อม Shift หรือ Alt หรือกดปุ่มด้านล่าง'
+        : '<b>ใช้คู่กัน (ค่าเริ่มต้น):</b> ปุ่มลูกโลกในหน้าการ์ด และปุ่ม Chat Lore เปิดหน้า World Info เดิมของ ST ตามปกติ · ปุ่ม World Info บนแถบด้านบนตั้งแยกได้ใน ทางเข้า Lore Master · แก้เล่มเดียวกันได้ทั้งสองที่ บันทึกแล้วอีกฝั่งเห็นตาม'}</div>
       ${prefRow('stPanelButton', 'ปุ่ม “เปิดใน Lore Master” ในหน้า World Info ของ ST', 'ปุ่มเล็กข้างปุ่ม Import เปิดเล่มที่เลือกอยู่ใน Lore Master')}
       ${prefRow('interceptImport', 'ปุ่ม Import ของ ST: ไฟล์ JanitorAI ให้เปิดที่นี่', 'เฉพาะไฟล์ที่ ST import เองไม่ได้ (เช่นของ JanitorAI) ไฟล์ lorebook ปกติ ST import เองเหมือนเดิม')}
       <div class="lm_row lm_wrap">
@@ -262,11 +277,23 @@ act('click', {
     's-wimode': el => {
         const on = el.dataset.v === '1';
         if (!!settings().replaceWorldInfo === on) return;
-        settings().replaceWorldInfo = on;
+        const s = settings();
+        s.replaceWorldInfo = on;
+        // "use instead" also means the top-bar button, unless it was set to something else on purpose
+        if (on && s.wiButton === 'off') s.wiButton = 'tap';
+        if (!on && s.wiButton === 'tap') s.wiButton = 'off';
         save();
         shell.refreshEntryPoints?.();
         shell.render();
-        toast.success(on ? 'ปุ่ม World Info ของ ST จะเปิด Lore Master แทน' : 'ปุ่ม World Info ของ ST กลับไปเปิดหน้าเดิมแล้ว', 'Lore Master');
+        toast.success(on ? 'ปุ่มของ ST จะเปิด Lore Master แทน' : 'ปุ่มของ ST กลับไปเปิดหน้าเดิมแล้ว', 'Lore Master');
+    },
+    's-wibtn': el => {
+        const v = el.dataset.v;
+        if (!['off', 'hold', 'tap'].includes(v) || settings().wiButton === v) return;
+        settings().wiButton = v;
+        save();
+        shell.refreshEntryPoints?.();
+        shell.render();
     },
     's-capx': el => { delete settings().caps[el.dataset.name]; save(); shell.render(); },
     's-capadd': async () => {

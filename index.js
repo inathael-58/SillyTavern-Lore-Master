@@ -19,8 +19,7 @@
 
 import {
     detectFormat, FORMAT_LABEL, overCap, isGlossary, parseGlossary, pickGlossary, GLOSSARY_HEAD,
-    keyScanner, wouldFire, trimToLimits, expectedLoad, turnSlots, groupsOf, delayed, byPriority, estTokens, bookStats, entriesOf,
-} from './lib.js';
+    keyScanner, wouldFire, trimToLimits, expectedLoad, turnSlots, groupsOf, delayed, byPriority, estTokens, bookStats, entriesOf, wiButtonAction } from './lib.js';
 import * as St from './store.js';
 import { settings, save, migrated } from './prefs.js';
 import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast, paintRange } from './ui.js';
@@ -33,7 +32,7 @@ import { createDiagnostics } from './diagnostics.js';
 import { installThemePalette } from './theme-palette.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.10.9'; // keep in sync with manifest.json
+const VERSION = '0.11.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'theme-palette.js', 'style.css', 'manifest.json'];
@@ -388,7 +387,7 @@ function renderWiButton() {
     anchor.insertAdjacentElement('afterend', b);
 }
 
-function refreshEntryPoints() { renderLauncher(); renderTopbar(); renderWand(); renderWiButton(); }
+function refreshEntryPoints() { renderLauncher(); renderTopbar(); renderWand(); renderWiButton(); refreshWiButton(); }
 shell.refreshEntryPoints = refreshEntryPoints;
 
 /**
@@ -433,16 +432,62 @@ shell.openStWorldInfo = () => {
     try { document.getElementById('WIDrawerIcon')?.click(); } finally { bypass = false; }
 };
 
+// ST's top-bar World Info button: tap / hold (settings().wiButton)
+const WI_HOLD_MS = 450;
+let wiHold = null;        // { id, x, y, timer } while a finger rests on the World Info button
+let wiEatClick = false;   // swallow the one click that ends a hold; reset on the next pointerdown
+const wiToggleOf = t => (t instanceof Element ? t.closest('#WI-SP-button > .drawer-toggle') : null);
+const wiMode = () => settings().wiButton;
+
+function runWi(action) {
+    if (action === 'lm') openFromContext();
+    else shell.openStWorldInfo();
+}
+
+function onWiDown(ev) {
+    wiEatClick = false;
+    clearTimeout(wiHold?.timer);
+    wiHold = null;
+    if (!ev.isTrusted || ev.button !== 0 || wiMode() === 'off') return;
+    if (document.documentElement.classList.contains('qd_picking')) return; // Quick Dock is choosing a button
+    if (!wiToggleOf(ev.target)) return;
+    const hold = { id: ev.pointerId, x: ev.clientX, y: ev.clientY };
+    hold.timer = setTimeout(() => {
+        if (wiHold !== hold) return;
+        wiHold = null;
+        wiEatClick = true;
+        try { navigator.vibrate?.(12); } catch { /* ignore */ }
+        runWi(wiButtonAction(wiMode(), 'hold', isOpenSt()));
+    }, WI_HOLD_MS);
+    wiHold = hold;
+}
+function onWiMove(ev) {
+    if (wiHold && ev.pointerId === wiHold.id && Math.hypot(ev.clientX - wiHold.x, ev.clientY - wiHold.y) > 10) {
+        clearTimeout(wiHold.timer);
+        wiHold = null;
+    }
+}
+function onWiUp(ev) {
+    if (wiHold && ev.pointerId === wiHold.id) { clearTimeout(wiHold.timer); wiHold = null; }
+}
+function onWiMenu(ev) {
+    if (wiMode() !== 'off' && wiToggleOf(ev.target)) ev.preventDefault(); // Android long-press menu
+}
+function refreshWiButton() { document.body.classList.toggle('lm_wihold', wiMode() !== 'off'); }
+
 function onDocClick(ev) {
-    if (bypass || !ev.isTrusted || ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey) return;
-    if (!settings().replaceWorldInfo) return;
+    if (bypass || !ev.isTrusted) return; // other extensions (Quick Dock shortcuts) still get ST's panel
+    if (wiEatClick) { wiEatClick = false; ev.preventDefault(); ev.stopImmediatePropagation(); return; }
+    if (ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey) return;
     const t = ev.target;
     if (!(t instanceof Element)) return;
-    // top-bar World Info button (let it close ST's panel if that is open)
-    if (t.closest('#WI-SP-button .drawer-toggle') && !isOpenSt()) {
-        ev.preventDefault(); ev.stopImmediatePropagation();
+    // top-bar World Info button (a tap still closes ST's panel if that is open)
+    if (wiToggleOf(t)) {
+        if (wiButtonAction(wiMode(), 'tap', isOpenSt()) !== 'lm') return;
+        ev.preventDefault(); ev.stopImmediatePropagation(); // capture on document runs before ST's handler
         return openFromContext();
     }
+    if (!settings().replaceWorldInfo) return;
     // the card's globe button: open the card's main book
     if (t.closest('#world_button')) {
         ev.preventDefault(); ev.stopImmediatePropagation();
@@ -813,6 +858,11 @@ function registerCommands() {
     refreshEntryPoints();
     registerCommands();
     document.addEventListener('click', onDocClick, true);
+    document.addEventListener('pointerdown', onWiDown, true);
+    document.addEventListener('pointermove', onWiMove, true);
+    document.addEventListener('pointerup', onWiUp, true);
+    document.addEventListener('pointercancel', onWiUp, true);
+    document.addEventListener('contextmenu', onWiMenu, true);
     document.addEventListener('change', onImportChange, true);
     const { eventSource, eventTypes } = St.ctx();
     const E = eventTypes ?? {};

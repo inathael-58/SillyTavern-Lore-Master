@@ -8,7 +8,8 @@ export const DEFAULTS = {
     interceptImport: true,       // World Info "Import" opens JanitorAI files here
     // Off (default): SillyTavern's own World Info buttons keep opening ST's panel, and Lore Master
     // opens only from its own entry points. On: those buttons open Lore Master instead.
-    replaceWorldInfo: false,     // the top-bar World Info button (and card/chat lore buttons) open Lore Master
+    replaceWorldInfo: false,     // the card's globe button and Chat Lore open Lore Master
+    wiButton: 'off',             // ST's top-bar World Info button: off | hold (hold opens LM) | tap (tap opens LM, hold opens ST's panel)
     stPanelButton: true,         // a small "open in Lore Master" button inside ST's World Info panel
     launcher: true,              // floating button
     launcherPos: { x: 1, y: 0.62, edge: 'right' },
@@ -36,7 +37,7 @@ export const DEFAULTS = {
 };
 
 /** Bumped when a default changes in a way existing installs should pick up once. */
-const PREFS_VERSION = 2;
+const PREFS_VERSION = 3;
 /** Set when this load moved an existing install to the new default, so the UI can say so once. */
 export const migrated = { replaceWorldInfo: false };
 
@@ -49,6 +50,12 @@ export function settings() {
         if (cur.replaceWorldInfo) migrated.replaceWorldInfo = true;
         cur.replaceWorldInfo = false;
     }
+    // v3: the top-bar World Info button got its own tap / hold setting. "Use instead" used to cover it,
+    // so an install that had it on keeps the same tap, and now gets ST's panel on a hold.
+    if (Object.keys(cur).length && !(Number(cur.prefsVersion) >= 3) && cur.wiButton === undefined) {
+        cur.wiButton = cur.replaceWorldInfo ? 'tap' : 'off';
+    }
+    if (!['off', 'hold', 'tap'].includes(cur.wiButton)) cur.wiButton = 'off';
     cur.prefsVersion = PREFS_VERSION;
     all[MODULE] = Object.assign({}, structuredClone(DEFAULTS), cur);
     if (!all[MODULE].caps || typeof all[MODULE].caps !== 'object') all[MODULE].caps = {};
