@@ -67,6 +67,7 @@ export function viewSettings() {
         <div class="lm_card">
           <div class="lm_seg lm_seg3">${[['theme', 'fa-palette', 'ตามธีม'], ['light', 'fa-sun', 'สว่าง'], ['dark', 'fa-moon', 'มืด']].map(([k, ic, lab]) =>
                 `<button class="lm_segbtn ${s.scheme === k ? 'lm_on' : ''}" data-act="s-scheme" data-v="${k}">${icon(ic)} ${lab}</button>`).join('')}</div>
+          <div class="lm_hint">ตามธีม = สีจากธีม ST ที่ใช้อยู่ · สว่าง/มืด = พื้นของแผงเอง ไม่ว่าธีมจะเป็นแบบไหน แต่ยังใช้สีเน้นของธีม · มืดทำมาสำหรับเล่นในห้องมืด: ตัวอักษรไม่ขาวจ้า ขอบจาง ช่องพิมพ์มืด สีเน้นนุ่มลง · สลับเร็ว ๆ ได้ที่ปุ่ม ${icon('fa-palette')} บนหัวแผง</div>
         </div>
 
         <h3 class="lm_h">${icon('fa-shield-halved')} จำกัดเอนทรีต่อเทิร์น</h3>
