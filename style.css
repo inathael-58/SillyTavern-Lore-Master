@@ -9,6 +9,7 @@
     --lm-border: var(--SmartThemeBorderColor, #4a4a55);
     --lm-surface: color-mix(in srgb, var(--lm-fg) 6%, transparent);
     --lm-surface2: color-mix(in srgb, var(--lm-fg) 10%, transparent);
+    --lm-field: var(--lm-surface2); /* text box background */
     --lm-soft: color-mix(in srgb, var(--lm-border) 45%, transparent);
     --lm-dim: color-mix(in srgb, var(--lm-fg) 62%, transparent);
     --lm-on-accent: #16120c;
@@ -54,15 +55,39 @@
     --lm-dim: #6f6b66;
     --lm-shadow: 0 4px 16px rgba(60, 40, 20, 0.08);
 }
+#lm_root[data-scheme="light"] { --lm-field: var(--lm-surface); }
+/* Dark = night-friendly, for a dark room (same values as NIGHT in night-palette.js): a near-black
+   panel, soft grey text instead of white, faint borders, text boxes darker than the panel, and the
+   theme accent with less saturation at 7:1 (--lm-p-accent-night, set once the palette is ready). */
 #lm_root[data-scheme="dark"] {
-    --lm-fg: #ececf1;
-    --lm-bg: #15151b;
-    --lm-border: #34343f;
-    --lm-surface: #1e1e26;
-    --lm-surface2: #272731;
-    --lm-soft: #2c2c36;
-    --lm-dim: #9b9ba8;
+    --lm-fg: #c4c0cb; /* slop-ok: night palette */
+    --lm-bg: #111015; /* slop-ok: night palette */
+    --lm-border: #27262d; /* slop-ok: night palette */
+    --lm-surface: #17161c; /* slop-ok: night palette */
+    --lm-surface2: #1c1b21; /* slop-ok: night palette */
+    --lm-field: #0d0c10; /* slop-ok: night palette */
+    --lm-soft: #1f1e24; /* slop-ok: night palette */
+    --lm-dim: #8a8693; /* slop-ok: night palette */
+    --lm-accent: color-mix(in oklab, var(--SmartThemeQuoteColor, #e18a24) 55%, #a6a2ae); /* slop-ok: night fallback before the palette */
+    --lm-on-accent: #111015; /* slop-ok: night palette */
+    --lm-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.72);
+    color-scheme: dark;
 }
+/* Fixed modes: ST's own controls inside the panel (inputs, menu buttons, checkboxes) follow the
+   mode, not the user's theme — otherwise a light theme leaves bright boxes in the dark panel. */
+#lm_root:is([data-scheme="light"], [data-scheme="dark"]) {
+    --SmartThemeBodyColor: var(--lm-fg);
+    --SmartThemeEmColor: var(--lm-fg);
+    --SmartThemeBorderColor: var(--lm-border);
+    --SmartThemeBlurTintColor: var(--lm-bg);
+}
+:where(#lm_root):is([data-scheme="light"], [data-scheme="dark"]) :is(.text_pole, textarea, select, input:is([type="text"], [type="search"], [type="number"], [type="url"], [type="email"], [type="password"], :not([type]))) {
+    background-color: var(--lm-field);
+    color: var(--lm-fg);
+    border-color: var(--lm-border);
+}
+:where(#lm_root):is([data-scheme="light"], [data-scheme="dark"]) :is(.text_pole, textarea, input)::placeholder { color: var(--lm-dim); opacity: 1; }
 #lm_root.lm_open { display: flex; justify-content: center; align-items: stretch; }
 html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root *, #lm_root *::before, #lm_root *::after { box-sizing: border-box; }
@@ -185,7 +210,7 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_input {
     width: 100%; min-height: 40px; padding: 7px 11px;
     border: 1px solid var(--lm-border); border-radius: 10px;
-    background: var(--lm-surface2); color: var(--lm-fg);
+    background: var(--lm-field); color: var(--lm-fg);
     font: inherit; font-size: 16px; /* 16px keeps iOS from zooming in */
     outline: none; transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -960,7 +985,7 @@ html.lm-pal :is(#lm_root:not([data-scheme="light"]):not([data-scheme="dark"]), #
 html.lm-pal #lm_root:not([data-scheme="light"]):not([data-scheme="dark"]) { --lm-on-accent: var(--lm-p-on-accent); }
 /* โหมดสว่าง/มืดที่เลือกเอง คงชุดสีของตัวเอง เปลี่ยนแค่สีเน้นให้ตัดกับพื้นของโหมดนั้น */
 html.lm-pal #lm_root[data-scheme="light"] { --lm-accent: var(--lm-p-accent-light); --lm-on-accent: #ffffff; }
-html.lm-pal #lm_root[data-scheme="dark"] { --lm-accent: var(--lm-p-accent-dark); }
+html.lm-pal #lm_root[data-scheme="dark"] { --lm-accent: var(--lm-p-accent-night, var(--lm-p-accent-dark)); --lm-on-accent: #111015; } /* slop-ok: night palette */
 
 /* ST's plain .menu_button is display:flex, which drops the space between an icon and its
    label. Zero-specificity roots, so a gap this extension already sets still wins. */

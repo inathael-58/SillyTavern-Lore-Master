@@ -30,12 +30,13 @@ import { viewSettings } from './settingsview.js';
 import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './look.js';
 import { createDiagnostics } from './diagnostics.js';
 import { installThemePalette } from './theme-palette.js';
+import { installNightAccent } from './night-palette.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.11.0'; // keep in sync with manifest.json
+const VERSION = '0.12.0'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
-const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'theme-palette.js', 'style.css', 'manifest.json'];
+const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'theme-palette.js', 'night-palette.js', 'style.css', 'manifest.json'];
 
 // Extensions > Lore Master > Diagnose (and /lore-debug): opens Lore Master, measures it, reports.
 const DIAG = createDiagnostics({
@@ -92,6 +93,13 @@ function onClick(ev) {
     if (el.tagName === 'LABEL' && el.querySelector('input[type=file]')) return;
     const a = el.dataset.act;
     if (a === 'close') return closeLM();
+    if (a === 'scheme') {
+        const s = settings();
+        s.scheme = SCHEMES[(Math.max(0, SCHEMES.findIndex(x => x[0] === s.scheme)) + 1) % SCHEMES.length][0];
+        save();
+        render();
+        return;
+    }
     if (a === 'back') { if (!back()) closeLM(); return; }
     if (a === 'nav') {
         const t = el.dataset.tab;
@@ -120,6 +128,8 @@ function onKeydown(ev) {
 
 let loading = null;
 let lastKey = '';
+/** Panel looks: the theme's colours, or a fixed light / night look that keeps only the theme's accent. */
+const SCHEMES = [['theme', 'fa-palette', 'ตามธีม'], ['light', 'fa-sun', 'สว่าง'], ['dark', 'fa-moon', 'มืด']];
 function render() {
     if (!UI.open || !root) return;
     const body = root.querySelector('.lm_body');
@@ -142,6 +152,10 @@ function render() {
         view = { title: 'Lore Master', body: `<div class="lm_card lm_err">เกิดข้อผิดพลาด: ${esc(e?.message ?? e)}</div>` };
     }
     const canBack = UI.tab === 'books' && UI.stack.length > 1;
+    // one-tap theme → light → dark, like Reverie; top-level views only, where the header has room
+    const si = Math.max(0, SCHEMES.findIndex(x => x[0] === settings().scheme));
+    const schemeTip = `สีแผง: ${SCHEMES[si][2]} — แตะเพื่อเปลี่ยนเป็น${SCHEMES[(si + 1) % SCHEMES.length][2]}`;
+    const schemeBtn = canBack ? '' : `<button class="lm_icon" data-act="scheme" title="${schemeTip}" aria-label="${schemeTip}">${icon(SCHEMES[si][1])}</button>`;
     const nav = [['books', 'fa-book', 'เล่ม'], ['doctor', 'fa-stethoscope', 'ตรวจ & รวม'], ['settings', 'fa-gear', 'ตั้งค่า']];
     root.dataset.scheme = settings().scheme;
     root.dataset.view = UI.tab === 'books' ? v.v : UI.tab;
@@ -154,7 +168,7 @@ function render() {
           <div class="lm_htitle" ${view.titleId ? `id="${view.titleId}"` : ''}>${esc(view.title)}</div>
           ${view.sub ? `<div class="lm_hsub">${view.sub}</div>` : ''}
         </div>
-        <div class="lm_hactions">${view.actions ?? ''}</div>
+        <div class="lm_hactions">${view.actions ?? ''}${schemeBtn}</div>
         <button class="lm_icon" data-act="close" aria-label="ปิด Lore Master">${icon('fa-xmark')}</button>
       </header>
       <main class="lm_body" data-key="${esc(key)}"><div class="lm_view">${view.body}</div></main>
@@ -846,7 +860,8 @@ function registerCommands() {
 
 (function init() {
     // สีที่อ่านออกเสมอ: แผงข้อมูลทึบ สีเน้นตัดกับพื้นจริง (ดู theme-palette.js)
-    try { installThemePalette({ prefix: 'lm', surfaces: { light: '#f6f4f1', dark: '#15151b' } }); } catch (err) { console.warn(LOG, 'theme palette', err); }
+    // โหมดมืดเป็นโหมดกลางคืน: สีเน้นของธีมแบบนุ่มลง (ดู night-palette.js)
+    try { installNightAccent(installThemePalette({ prefix: 'lm', surfaces: { light: '#f6f4f1', dark: '#15151b' } }), 'lm'); } catch (err) { console.warn(LOG, 'theme palette', err); }
     settings();
     if (migrated.replaceWorldInfo) {
         save();
