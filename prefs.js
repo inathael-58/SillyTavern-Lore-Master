@@ -5,7 +5,7 @@
 export const MODULE = 'lore-master';
 
 export const DEFAULTS = {
-    interceptImport: true,       // World Info "Import" opens JanitorAI files here
+    interceptImport: true,       // World Info "Import" also takes JanitorAI files (converted to a book)
     // Off (default): SillyTavern's own World Info buttons keep opening ST's panel, and Lore Master
     // opens only from its own entry points. On: those buttons open Lore Master instead.
     replaceWorldInfo: false,     // the card's globe button and Chat Lore open Lore Master

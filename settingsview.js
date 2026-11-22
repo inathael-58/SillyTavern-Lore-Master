@@ -224,7 +224,7 @@ function worldInfoBlock() {
         ? '<b>ใช้แทน:</b> ปุ่มลูกโลกในหน้าการ์ด และปุ่ม Chat Lore จะเปิด Lore Master แทนหน้าเดิมของ ST · ปุ่ม World Info บนแถบด้านบนตั้งแยกได้ใน ทางเข้า Lore Master (แตะหรือกดค้าง) · ถ้าต้องการหน้าเดิมสักครั้ง กดปุ่มพร้อม Shift หรือ Alt หรือกดปุ่มด้านล่าง'
         : '<b>ใช้คู่กัน (ค่าเริ่มต้น):</b> ปุ่มลูกโลกในหน้าการ์ด และปุ่ม Chat Lore เปิดหน้า World Info เดิมของ ST ตามปกติ · ปุ่ม World Info บนแถบด้านบนตั้งแยกได้ใน ทางเข้า Lore Master · แก้เล่มเดียวกันได้ทั้งสองที่ บันทึกแล้วอีกฝั่งเห็นตาม'}</div>
       ${prefRow('stPanelButton', 'ปุ่ม “เปิดใน Lore Master” ในหน้า World Info ของ ST', 'ปุ่มเล็กข้างปุ่ม Import เปิดเล่มที่เลือกอยู่ใน Lore Master')}
-      ${prefRow('interceptImport', 'ปุ่ม Import ของ ST: ไฟล์ JanitorAI ให้เปิดที่นี่', 'เฉพาะไฟล์ที่ ST import เองไม่ได้ (เช่นของ JanitorAI) ไฟล์ lorebook ปกติ ST import เองเหมือนเดิม')}
+      ${prefRow('interceptImport', 'ปุ่ม Import ของ ST: รับไฟล์ JanitorAI ด้วย', 'ไฟล์ที่ ST import เองไม่ได้ (JanitorAI, character_book) Lore Master แปลงเป็นเล่มให้ ไฟล์ lorebook ปกติ ST import เองเหมือนเดิม')}
       <div class="lm_row lm_wrap">
         <button class="lm_btn" data-act="s-stwi">${icon('fa-book-atlas')} เปิดหน้า World Info เดิมของ ST</button>
       </div>`;

@@ -4,7 +4,7 @@
  */
 
 import {
-    readLorebook, mergeBooks, diagnose, applyChanges, simulate, summarize, toWorld,
+    readLorebook, detectFormat, mergeBooks, diagnose, applyChanges, simulate, summarize, toWorld,
     estTokens, FORMAT_LABEL, POSITION, cardFromPng, LONG_TOKENS, THAI, cleanKeys, isGlossary, upsertGlossaryList, glossaryLines,
     keyPlan, NAME_SYSTEM, collectNames, deriveNames, nameRequest, parseNameReply, entrySuggestions, preferThaiKey, LANG_LABEL, vetThaiKey, CONDENSE_SYSTEM, condenseRequest, cleanCondensed,
     entryLanguage, wantsTranslation, TRANSLATE_SYSTEM, translateRequest, translateBudget, parseTranslation, applyTranslation,
@@ -101,21 +101,61 @@ async function addBook(name) {
         addSource({ name, raw: structuredClone(raw), book: name });
     } catch (e) { toast.error(`${name}: ${e?.message ?? e}`); }
 }
+/** One file → its JSON (a card .png gives the card). Throws with a reason the user can read. */
+async function parseFile(f) {
+    if (/\.png$/i.test(f.name) || f.type === 'image/png') {
+        const raw = cardFromPng(await f.arrayBuffer());
+        if (!raw) throw new Error('รูปนี้ไม่มีข้อมูลการ์ดตัวละคร');
+        if (!(raw.data?.character_book?.entries ?? raw.character_book?.entries)?.length) throw new Error('การ์ดนี้ไม่มี lorebook ในตัว');
+        return raw;
+    }
+    try { return JSON.parse(await f.text()); } catch { throw new Error('ไฟล์นี้ไม่ใช่ JSON'); }
+}
+const fileBase = f => f.name.replace(/\.(json|png)$/i, '');
 async function readFiles(files) {
     let n = 0;
     for (const f of files) {
         try {
-            let raw;
-            if (/\.png$/i.test(f.name) || f.type === 'image/png') {
-                raw = cardFromPng(await f.arrayBuffer());
-                if (!raw) throw new Error('รูปนี้ไม่มีข้อมูลการ์ดตัวละคร');
-                if (!(raw.data?.character_book?.entries ?? raw.character_book?.entries)?.length) throw new Error('การ์ดนี้ไม่มี lorebook ในตัว');
-            } else raw = JSON.parse(await f.text());
-            addSource({ name: f.name.replace(/\.(json|png)$/i, ''), raw });
+            addSource({ name: fileBase(f), raw: await parseFile(f) });
             n++;
         } catch (e) { toast.error(`${f.name}: ${e?.message ?? e}`, 'อ่านไฟล์ไม่ได้'); }
     }
     return n;
+}
+
+/**
+ * Import files to use them: each file becomes a new book in ST straight away, no checks.
+ * ST books are saved as they are; JanitorAI / character_book / cards are converted to ST's format;
+ * NovelAI / Agnai / RisuAI go through ST's own importer, which converts those.
+ * A name already taken gets “(2)”, nothing is overwritten.
+ * @param {File[]} files
+ * @param {{announce?: boolean}} [o] announce: a toast per book (off when the caller says it itself)
+ * @returns {Promise<string[]>} the names of the new books
+ */
+export async function importBooks(files, { announce = true } = {}) {
+    const made = [];
+    for (const f of files) {
+        try {
+            const raw = await parseFile(f);
+            const fmt = detectFormat(raw);
+            if (fmt === 'novel' || fmt === 'agnai' || fmt === 'risu') {
+                if (typeof W.importWorldInfo !== 'function') throw new Error(`ยังอ่านไฟล์ ${FORMAT_LABEL[fmt]} ไม่ได้`);
+                const before = new Set(St.bookNames());
+                await W.importWorldInfo(f);      // shows its own toast
+                made.push(...St.bookNames().filter(n => !before.has(n)));
+                continue;
+            }
+            const read = readLorebook(raw, { name: fileBase(f), defaultPosition: Number(settings().position), template: St.template() });
+            const data = fmt === 'st' ? raw : toWorld(read.entries, { template: St.template() });
+            const name = await St.createBook(St.freeName(fileBase(f) || read.name || 'Lorebook'), data);
+            made.push(name);
+            if (announce) toast.success(`นำเข้า “${name}” แล้ว · ${read.entries.length} เอนทรี${fmt === 'st' ? '' : ` (แปลงจาก ${FORMAT_LABEL[fmt]})`}`, 'Lore Master');
+        } catch (e) {
+            console.error(LOG, 'import', e);
+            toast.error(`${f.name}: ${e?.message ?? e}`, 'นำเข้าไม่สำเร็จ');
+        }
+    }
+    return made;
 }
 
 // ---------------------------------------------------------------- which book this page is about
@@ -222,13 +262,6 @@ export async function startMerge(names) {
     for (const n of names) await addBook(n);
     rebuild();
     S.step = 'src'; S.picker = true;
-    goTab('doctor');
-}
-export function importJson(name, raw) {
-    S.sources = [];
-    addSource({ name, raw });
-    rebuild();
-    S.step = 'fix';
     goTab('doctor');
 }
 

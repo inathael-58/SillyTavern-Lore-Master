@@ -25,7 +25,7 @@ import { settings, save, migrated } from './prefs.js';
 import { esc, icon, on, shell, UI, top, back, goTab, viewKey, toast, paintRange } from './ui.js';
 import { viewLibrary, viewBook, viewEntry, enterBook, hooks, onFieldEvent, onFocusOut, onToggleDetails, focusAfterRender, autosize } from './editor.js';
 import { viewOrganize, onOrganizeToggle } from './organize.js';
-import { viewDoctor, checkBook, importFiles, startMerge, importJson, initDoctor, thaiBook, condenseBook, translateBook, enterDoctor, onDoctorToggle } from './doctor.js';
+import { viewDoctor, checkBook, importFiles, importBooks, startMerge, initDoctor, thaiBook, condenseBook, translateBook, enterDoctor, onDoctorToggle } from './doctor.js';
 import { viewSettings } from './settingsview.js';
 import { applyLaunch, applyTop, applyMenu, setAlert, openLookEditor } from './look.js';
 import { createDiagnostics } from './diagnostics.js';
@@ -33,7 +33,7 @@ import { installThemePalette } from './theme-palette.js';
 import { installNightAccent } from './night-palette.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.12.1'; // keep in sync with manifest.json
+const VERSION = '0.12.2'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'theme-palette.js', 'night-palette.js', 'style.css', 'manifest.json'];
@@ -55,6 +55,11 @@ const W = St.WIref;
 hooks.checkBook = checkBook;
 // the picker can outlive the panel (closed while choosing): show the result either way
 hooks.importFiles = async files => { await importFiles(files); if (files?.length && !UI.open) openLM(null, 'doctor'); };
+hooks.importBooks = async files => {
+    const names = await importBooks(files);
+    if (names.length && !UI.open) openLM(names.length === 1 ? [{ v: 'book', name: names[0] }] : []);
+    return names;
+};
 hooks.mergeBooks = startMerge;
 hooks.thaiBook = thaiBook;
 hooks.condenseBook = condenseBook;
@@ -517,7 +522,7 @@ function onDocClick(ev) {
     }
 }
 
-// ---------------------------------------------------------------- World Info "Import": JanitorAI files open here
+// ---------------------------------------------------------------- World Info "Import": JanitorAI files become books too
 
 async function onImportChange(ev) {
     const input = ev.target;
@@ -529,16 +534,16 @@ async function onImportChange(ev) {
     let fmt = null, raw = null;
     try { raw = JSON.parse(await file.text()); fmt = detectFormat(raw); } catch { fmt = null; }
     if (fmt === 'janitor' || fmt === 'charbook' || fmt === 'card') {
+        // ST cannot read these: convert and save as a book, then show it in ST's editor like ST's own import
         input.value = '';
+        const [name] = await importBooks([file], { announce: false });
+        if (!name) return;                                    // importBooks said why
         try {
-            importJson(file.name.replace(/\.json$/i, ''), raw);
-            closeStWorldInfo();
-            openLM(null, 'doctor');
-            toast.info(`ไฟล์นี้เป็นแบบ ${FORMAT_LABEL[fmt]} ซึ่ง ST import เองไม่ได้ เปิดใน Lore Master ให้แล้ว ตรวจเสร็จกดบันทึก`, 'Lore Master', { timeOut: 9000 });
-        } catch (e) {
-            console.error(LOG, 'import', e);
-            toast.error(String(e?.message ?? e), `${file.name}: นำเข้าไม่สำเร็จ`);
-        }
+            const i = St.bookNames().indexOf(name);
+            if (i >= 0) globalThis.jQuery?.('#world_editor_select').val(i).trigger('change');
+        } catch { /* the editor shows it next time */ }
+        toast.success(`นำเข้า “${esc(name)}” แล้ว (แปลงจาก ${FORMAT_LABEL[fmt]})<br><small>แตะเพื่อตรวจใน Lore Master</small>`, 'Lore Master',
+            { timeOut: 9000, escapeHtml: false, onclick: () => { closeStWorldInfo(); checkBook(name).then(() => openLM(null, 'doctor')); } });
         return;
     }
     try {
@@ -546,7 +551,7 @@ async function onImportChange(ev) {
         await W.importWorldInfo(file);
     } catch (e) {
         console.error(LOG, 'import', e);
-        toast.error(`${esc(String(e?.message ?? e))}<br>ปิด “ปุ่ม Import ของ ST: ไฟล์ JanitorAI ให้เปิดที่นี่” ในตั้งค่า Lore Master แล้วลองใหม่ได้`, `${esc(file.name)}: นำเข้าไม่สำเร็จ`, { escapeHtml: false, timeOut: 12000 });
+        toast.error(`${esc(String(e?.message ?? e))}<br>ปิด “ปุ่ม Import ของ ST: รับไฟล์ JanitorAI ด้วย” ในตั้งค่า Lore Master แล้วลองใหม่ได้`, `${esc(file.name)}: นำเข้าไม่สำเร็จ`, { escapeHtml: false, timeOut: 12000 });
     } finally { input.value = ''; }
 }
 
