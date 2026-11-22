@@ -13,7 +13,7 @@ import { nameCache, rememberNames } from './cache.js';
 import { backupPut, backupList } from './backup.js';
 import { settings, save } from './prefs.js';
 import * as St from './store.js';
-import { esc, icon, act, shell, UI, top, push, back, goTab, sheet, confirmBox, promptBox, previewBox, pickBook, download, toast, fmt, switchHtml, rangeHtml } from './ui.js';
+import { esc, icon, act, shell, UI, top, push, back, goTab, sheet, pickFiles, confirmBox, promptBox, previewBox, pickBook, download, toast, fmt, switchHtml, rangeHtml } from './ui.js';
 
 let thaiSeg = null;
 try { thaiSeg = new Intl.Segmenter('th', { granularity: 'word' }); } catch { thaiSeg = null; }
@@ -25,6 +25,9 @@ export function isThaiDictWord(s) {
 const names = () => ({ char: St.ctx().name2 ?? '', user: St.ctx().name1 ?? '' });
 const warnCtx = () => ({ names: names(), isThaiDictWord });
 const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric: true });
+
+/** What the import pickers accept: ST / JanitorAI / character_book .json and cards (.png). */
+export const IMPORT_ACCEPT = '.json,application/json,.png,image/png';
 
 /** Hooks the doctor module fills in (avoids a circular import). */
 export const hooks = { checkBook: async () => {}, importFiles: async () => {}, mergeBooks: () => {}, thaiBook: async () => {}, condenseBook: async () => {}, translateBook: async () => {} };
@@ -178,11 +181,13 @@ async function bookMenu(name) {
 }
 
 async function newMenu() {
+    let picked = null;
     const v = await sheet({
         title: 'เพิ่มเล่ม',
         items: [
             { value: 'new', label: 'สร้างเล่มเปล่า', icon: 'fa-file-circle-plus' },
-            { value: 'import', label: 'นำเข้าไฟล์ .json / การ์ด .png', icon: 'fa-file-import', hint: 'ไฟล์ของ ST, JanitorAI, character_book หรือ lorebook ในการ์ด — ตรวจและซ่อมก่อนบันทึก' },
+            { value: 'import', label: 'นำเข้าไฟล์ .json / การ์ด .png', icon: 'fa-file-import', hint: 'ไฟล์ของ ST, JanitorAI, character_book หรือ lorebook ในการ์ด — ตรวจและซ่อมก่อนบันทึก',
+                now: () => { picked = pickFiles({ accept: IMPORT_ACCEPT, multiple: true }); } },
             { value: 'merge', label: 'รวมหลายเล่มเป็นเล่มเดียว', icon: 'fa-object-group' },
         ],
     });
@@ -201,10 +206,9 @@ async function newMenu() {
             }
         } catch (e) { toast.error(String(e?.message ?? e)); }
     }
-    if (v === 'import') {
-        const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.json,application/json,.png,image/png', multiple: true });
-        input.addEventListener('change', () => hooks.importFiles([...input.files]));
-        input.click();
+    if (v === 'import' && picked) {
+        const files = await picked;
+        if (files.length) await hooks.importFiles(files);
     }
     if (v === 'merge') hooks.mergeBooks([]);
 }

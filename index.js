@@ -33,7 +33,7 @@ import { installThemePalette } from './theme-palette.js';
 import { installNightAccent } from './night-palette.js';
 
 const LOG = '[LoreMaster]';
-const VERSION = '0.12.0'; // keep in sync with manifest.json
+const VERSION = '0.12.1'; // keep in sync with manifest.json
 const BASE_URL = new URL('.', import.meta.url);
 /** Every file of the extension, so a hard refresh can replace all of them in the browser cache. */
 const FILES = ['index.js', 'lib.js', 'store.js', 'ui.js', 'prefs.js', 'ai.js', 'backup.js', 'cache.js', 'editor.js', 'doctor.js', 'organize.js', 'settingsview.js', 'look.js', 'diagnostics.js', 'theme-palette.js', 'night-palette.js', 'style.css', 'manifest.json'];
@@ -53,7 +53,8 @@ const DIAG = createDiagnostics({
 const W = St.WIref;
 
 hooks.checkBook = checkBook;
-hooks.importFiles = importFiles;
+// the picker can outlive the panel (closed while choosing): show the result either way
+hooks.importFiles = async files => { await importFiles(files); if (files?.length && !UI.open) openLM(null, 'doctor'); };
 hooks.mergeBooks = startMerge;
 hooks.thaiBook = thaiBook;
 hooks.condenseBook = condenseBook;
@@ -523,19 +524,30 @@ async function onImportChange(ev) {
     if (!(input instanceof HTMLInputElement) || input.id !== 'world_import_file' || !settings().interceptImport) return;
     const file = input.files?.[0];
     if (!file || !/\.json$/i.test(file.name)) return;
+    // ST's own handler is stopped here, so from now on this function must import the file or say why
     ev.stopImmediatePropagation();
-    let raw = null;
-    try { raw = JSON.parse(await file.text()); } catch { raw = null; }
-    const fmt = raw ? detectFormat(raw) : null;
+    let fmt = null, raw = null;
+    try { raw = JSON.parse(await file.text()); fmt = detectFormat(raw); } catch { fmt = null; }
     if (fmt === 'janitor' || fmt === 'charbook' || fmt === 'card') {
         input.value = '';
-        importJson(file.name.replace(/\.json$/i, ''), raw);
-        closeStWorldInfo();
-        openLM(null, 'doctor');
-        toast.info(`ไฟล์นี้เป็นแบบ ${FORMAT_LABEL[fmt]} ซึ่ง ST import เองไม่ได้ เปิดใน Lore Master ให้แล้ว ตรวจเสร็จกดบันทึก`, 'Lore Master', { timeOut: 9000 });
+        try {
+            importJson(file.name.replace(/\.json$/i, ''), raw);
+            closeStWorldInfo();
+            openLM(null, 'doctor');
+            toast.info(`ไฟล์นี้เป็นแบบ ${FORMAT_LABEL[fmt]} ซึ่ง ST import เองไม่ได้ เปิดใน Lore Master ให้แล้ว ตรวจเสร็จกดบันทึก`, 'Lore Master', { timeOut: 9000 });
+        } catch (e) {
+            console.error(LOG, 'import', e);
+            toast.error(String(e?.message ?? e), `${file.name}: นำเข้าไม่สำเร็จ`);
+        }
         return;
     }
-    try { await W.importWorldInfo(file); } finally { input.value = ''; }
+    try {
+        if (typeof W.importWorldInfo !== 'function') throw new Error('SillyTavern รุ่นนี้ไม่มี importWorldInfo');
+        await W.importWorldInfo(file);
+    } catch (e) {
+        console.error(LOG, 'import', e);
+        toast.error(`${esc(String(e?.message ?? e))}<br>ปิด “ปุ่ม Import ของ ST: ไฟล์ JanitorAI ให้เปิดที่นี่” ในตั้งค่า Lore Master แล้วลองใหม่ได้`, `${esc(file.name)}: นำเข้าไม่สำเร็จ`, { escapeHtml: false, timeOut: 12000 });
+    } finally { input.value = ''; }
 }
 
 // ---------------------------------------------------------------- runtime: per-turn cap
