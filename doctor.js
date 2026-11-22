@@ -11,8 +11,8 @@ import {
 } from './lib.js';
 import * as St from './store.js';
 import { settings, save } from './prefs.js';
-import { esc, icon, act, shell, goTab, goTo, toast, download, fmt, UI } from './ui.js';
-import { isThaiDictWord } from './editor.js';
+import { esc, icon, act, shell, goTab, goTo, toast, download, fmt, UI, pickFiles } from './ui.js';
+import { isThaiDictWord, IMPORT_ACCEPT } from './editor.js';
 import { ask, activeSources, sourceLabel } from './ai.js';
 import { nameCache, rememberNames } from './cache.js';
 import { backupPut, backupList } from './backup.js';
@@ -206,8 +206,15 @@ export async function translateBook(name) {
     shell.render();
 }
 export async function importFiles(files) {
+    if (!files?.length) return;
     S.sources = [];
-    if (await readFiles(files)) { rebuild(); S.step = 'fix'; } else S.step = 'src';
+    try {
+        if (await readFiles(files)) { rebuild(); S.step = 'fix'; } else S.step = 'src';
+    } catch (e) {
+        console.error('[Lore Master] import', e);
+        toast.error(String(e?.message ?? e), 'นำเข้าไม่สำเร็จ');
+        S.step = 'src';
+    }
     goTab('doctor');
 }
 export async function startMerge(names) {
@@ -257,8 +264,7 @@ function viewSources() {
       <div>เลือก lorebook ที่จะตรวจ ถ้าเลือกหลายเล่มจะรวมเป็นเล่มเดียวให้ ไฟล์ export ของ <b>JanitorAI</b> ที่ ST import เองไม่ได้ ใช้ที่นี่ได้เลย</div>
     </div>
     <div class="lm_bigchoices">
-      <label class="lm_choice">${icon('fa-file-import')}<b>เลือกไฟล์</b><small>.json ของ ST · JanitorAI · การ์ด .png (ตรวจก่อน import ได้) · หลายไฟล์ได้</small>
-        <input type="file" accept=".json,application/json,.png,image/png" multiple hidden data-act="d-files"></label>
+      <button class="lm_choice" data-act="d-files">${icon('fa-file-import')}<b>เลือกไฟล์</b><small>.json ของ ST · JanitorAI · การ์ด .png (ตรวจก่อน import ได้) · หลายไฟล์ได้</small></button>
       <button class="lm_choice ${S.picker ? 'lm_on' : ''}" data-act="d-picker">${icon('fa-book')}<b>เลือกจากเล่มใน ST</b><small>${(St.bookNames()).length} เล่ม</small></button>
       ${openBookName() && !S.sources.some(s => s.book === openBookName()) ? `<button class="lm_choice" data-act="d-switch" data-book="${esc(openBookName())}">${icon('fa-book-open')}<b>เล่มที่เปิดอยู่</b><small>${esc(openBookName())}</small></button>` : ''}
       ${cc ? `<button class="lm_choice" data-act="d-charbooks">${icon('fa-user')}<b>เล่มของ ${esc(cc.ch.name)}</b><small>เล่มหลัก + เล่มเสริม</small></button>` : ''}
@@ -949,6 +955,13 @@ async function restoreLatest(book) {
 // ---------------------------------------------------------------- events
 
 act('click', {
+    // adds files to the books already picked (the "เพิ่มเล่ม → นำเข้า" menu starts afresh instead)
+    'd-files': async () => {
+        const files = await pickFiles({ accept: IMPORT_ACCEPT, multiple: true });
+        if (!files.length) return;
+        if (await readFiles(files)) rebuild();
+        shell.render();
+    },
     'd-step': el => { if (el.disabled) return; S.step = el.dataset.step; if (S.step === 'test' && !S.simText) S.simText = St.chatSample(); shell.render(); },
     'd-picker': () => { if (S.picker) rebuild(); S.picker = !S.picker; shell.render(); },
     'd-charbooks': async () => {
@@ -1062,7 +1075,6 @@ act('change', {
     // keys edited by hand: show the combined key list again
     'd-tedit': el => { if (el.dataset.f !== 'content') shell.render(); },
     'd-con': el => { const r = S.condensed?.get(Number(el.dataset.uid)); if (r) { r.on = el.checked; shell.render(); } },
-    'd-files': async el => { if (await readFiles([...el.files])) rebuild(); el.value = ''; shell.render(); },
     'd-pickbook': async el => { if (el.checked) await addBook(el.dataset.book); else S.sources = S.sources.filter(s => s.book !== el.dataset.book); rebuild(); shell.render(); },
     'd-pos': el => { settings().position = Number(el.value); save(); rereadSources(); rebuild(); shell.render(); },
     'd-check': el => { for (const i of S.issues) for (const c of i.changes) if (c.id === el.dataset.id) c.checked = el.checked; shell.render(); },

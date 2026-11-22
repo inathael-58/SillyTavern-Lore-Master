@@ -83,10 +83,42 @@ export function sheet({ title = '', sub = '', items }) {
         el.addEventListener('click', e => {
             if (e.target.closest('[data-x]')) return close(null);
             const b = e.target.closest('[data-i]');
-            if (b && !b.disabled) close(items[Number(b.dataset.i)].value);
+            if (!b || b.disabled) return;
+            const it = items[Number(b.dataset.i)];
+            it.now?.();   // still inside the tap: a file picker opened later is blocked on iPhone
+            close(it.value);
         });
         el.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); close(null); } });
         el.querySelector('.lm_sheet_item:not([disabled])')?.focus({ preventScroll: true });
+    });
+}
+
+/**
+ * Open the phone's / browser's file picker. Call it straight from a tap (not after an await).
+ * The input lives on <body>, outside the panel, so a re-draw while the picker is open cannot remove it,
+ * and `picking` holds it so it is not garbage-collected — either way its "change" never fired
+ * (iPhone, Android Chrome) and the import went silent. Resolves with the chosen files ([] = cancelled).
+ */
+let picking = null;
+export function pickFiles({ accept = '', multiple = false } = {}) {
+    return new Promise(resolve => {
+        picking?.remove();
+        const input = Object.assign(document.createElement('input'), { type: 'file', accept, multiple });
+        input.className = 'lm_filepick';
+        input.setAttribute('aria-hidden', 'true');
+        input.tabIndex = -1;
+        input.style.cssText = ['position:fixed', 'left:-9999px', 'top:0', 'width:1px', 'height:1px', 'opacity:0', 'pointer-events:none']
+            .map(d => `${d}!important`).join(';');
+        document.body.appendChild(input);
+        picking = input;
+        const done = files => {
+            if (picking === input) picking = null;
+            input.remove();
+            resolve(files);
+        };
+        input.addEventListener('change', () => done([...(input.files ?? [])]), { once: true });
+        input.addEventListener('cancel', () => done([]), { once: true });
+        input.click();
     });
 }
 

@@ -457,7 +457,7 @@ html.lm_noscroll, html.lm_noscroll body { overflow: hidden; }
 #lm_root .lm_bigchoices { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 #lm_root .lm_choice {
     display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; padding: 11px 8px; cursor: pointer;
-    border: 1px solid var(--lm-soft); border-radius: var(--lm-radius); background: var(--lm-surface);
+    font: inherit; color: inherit; width: 100%; border: 1px solid var(--lm-soft); border-radius: var(--lm-radius); background: var(--lm-surface);
 }
 #lm_root .lm_choice i { font-size: 22px; color: var(--lm-accent); margin-bottom: 2px; }
 #lm_root .lm_choice small { color: var(--lm-dim); font-size: 12px; }
