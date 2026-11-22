@@ -30,7 +30,7 @@ const collator = new Intl.Collator(['th', 'en'], { sensitivity: 'base', numeric:
 export const IMPORT_ACCEPT = '.json,application/json,.png,image/png';
 
 /** Hooks the doctor module fills in (avoids a circular import). */
-export const hooks = { checkBook: async () => {}, importFiles: async () => {}, mergeBooks: () => {}, thaiBook: async () => {}, condenseBook: async () => {}, translateBook: async () => {} };
+export const hooks = { checkBook: async () => {}, importFiles: async () => {}, importBooks: async () => [], mergeBooks: () => {}, thaiBook: async () => {}, condenseBook: async () => {}, translateBook: async () => {} };
 
 const PAGE = 60; // entry cards shown at once (books with 500+ entries stay fast)
 const L = { q: '', bookQ: '', filter: 'all', sort: 'book', selecting: false, selected: new Set(), focus: null, limit: PAGE,
@@ -182,12 +182,13 @@ async function bookMenu(name) {
 
 async function newMenu() {
     let picked = null;
+    const pick = () => { picked = pickFiles({ accept: IMPORT_ACCEPT, multiple: true }); };
     const v = await sheet({
         title: 'เพิ่มเล่ม',
         items: [
             { value: 'new', label: 'สร้างเล่มเปล่า', icon: 'fa-file-circle-plus' },
-            { value: 'import', label: 'นำเข้าไฟล์ .json / การ์ด .png', icon: 'fa-file-import', hint: 'ไฟล์ของ ST, JanitorAI, character_book หรือ lorebook ในการ์ด — ตรวจและซ่อมก่อนบันทึก',
-                now: () => { picked = pickFiles({ accept: IMPORT_ACCEPT, multiple: true }); } },
+            { value: 'import', label: 'นำเข้าไฟล์ .json / การ์ด .png', icon: 'fa-file-import', hint: 'ได้เป็นเล่มใหม่ ใช้ได้เลย · ไฟล์ของ ST, JanitorAI, character_book หรือ lorebook ในการ์ด', now: pick },
+            { value: 'importcheck', label: 'นำเข้าแล้วตรวจก่อน', icon: 'fa-stethoscope', hint: 'เปิดใน ตรวจ & รวม หาจุดที่ทำให้ติดผิด ซ่อมแล้วค่อยบันทึก', now: pick },
             { value: 'merge', label: 'รวมหลายเล่มเป็นเล่มเดียว', icon: 'fa-object-group' },
         ],
     });
@@ -198,19 +199,33 @@ async function newMenu() {
         try {
             const name = await St.createBook(n);
             push({ v: 'book', name });
-            if (cc && !St.charBooks(cc).primary) {
-                if (await confirmBox({ title: `ตั้งเป็นเล่มหลักของ ${cc.ch.name}?`, text: 'การ์ดนี้ยังไม่มีเล่มหลัก ตั้งแล้วเล่มจะติดไปกับการ์ดตอน export', ok: 'ตั้งเลย' })) {
-                    await St.setPrimary(name);
-                    shell.render();
-                }
-            }
+            await offerPrimary(name);
         } catch (e) { toast.error(String(e?.message ?? e)); }
     }
     if (v === 'import' && picked) {
         const files = await picked;
+        if (!files.length) return;
+        const names = await hooks.importBooks(files);
+        if (names.length === 1) {
+            if (top().name !== names[0]) push({ v: 'book', name: names[0] });
+            await offerPrimary(names[0]);
+        } else shell.render();
+    }
+    if (v === 'importcheck' && picked) {
+        const files = await picked;
         if (files.length) await hooks.importFiles(files);
     }
     if (v === 'merge') hooks.mergeBooks([]);
+}
+
+/** A book just made for the open character: offer it as the card's primary book if the card has none. */
+async function offerPrimary(name) {
+    const cc = St.currentChar();
+    if (!cc || St.charBooks(cc).primary) return;
+    if (await confirmBox({ title: `ตั้งเป็นเล่มหลักของ ${cc.ch.name}?`, text: 'การ์ดนี้ยังไม่มีเล่มหลัก ตั้งแล้วเล่มจะติดไปกับการ์ดตอน export', ok: 'ตั้งเลย' })) {
+        await St.setPrimary(name);
+        shell.render();
+    }
 }
 
 /** Put back a whole-book backup (taken before Check & Merge saves or the AI organiser). */
